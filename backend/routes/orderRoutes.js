@@ -1,0 +1,10 @@
+import express from "express";
+
+import { listOrders } from "../controllers/orderController.js";
+import protect from "../middleware/authMiddleware.js";
+
+const router = express.Router();
+
+router.get("/", protect, listOrders);
+
+export default router;
