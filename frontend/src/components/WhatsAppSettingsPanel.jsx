@@ -1,8 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   Check,
-  CheckCheck,
   ChevronRight,
   CircleDot,
   Copy,
@@ -11,92 +10,77 @@ import {
   Link2,
   Loader2,
   MessageCircle,
-  PlugZap,
-  Power,
-  QrCode,
-  RefreshCw,
   Save,
   ShieldCheck,
   Smartphone,
-  Unplug,
-  Wifi
+  Webhook
 } from "lucide-react";
 
 import { useToast } from "../context/ToastContext";
-import { defaultWhatsAppSettings } from "../services/demo";
-
-const STORAGE_KEY = "bizassist:whatsapp-settings";
-
-const loadSettings = () => {
-  try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-    return { ...defaultWhatsAppSettings, ...(stored || {}) };
-  } catch {
-    return { ...defaultWhatsAppSettings };
-  }
-};
-
-const persist = (settings) => localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-
-const finder = (row, col) => {
-  const inTopLeft = row < 7 && col < 7;
-  const inTopRight = row < 7 && col >= 18;
-  const inBottomLeft = row >= 18 && col < 7;
-
-  const pattern = (r, c) => {
-    const ring = r === 0 || r === 6 || c === 0 || c === 6;
-    const center = r >= 2 && r <= 4 && c >= 2 && c <= 4;
-    return ring || center;
-  };
-
-  if (inTopLeft) return pattern(row, col);
-  if (inTopRight) return pattern(row, col - 18);
-  if (inBottomLeft) return pattern(row - 18, col);
-  return null;
-};
-
-const makeQrMatrix = (seed) => {
-  let state = seed * 9301 + 49297;
-
-  return Array.from({ length: 25 }, (_, row) =>
-    Array.from({ length: 25 }, (_, col) => {
-      const fixed = finder(row, col);
-      if (fixed !== null) return fixed;
-      state = (state * 9301 + 49297) % 233280;
-      return state / 233280 > 0.52;
-    })
-  );
-};
+import api, { getErrorMessage } from "../services/api";
+import { defaultWhatsAppSettings } from "../utils/settingsDefaults";
 
 export default function WhatsAppSettingsPanel() {
   const { toast } = useToast();
-  const [settings, setSettings] = useState(loadSettings);
-  const [tokenVisible, setTokenVisible] = useState(false);
-  const [qrSeed, setQrSeed] = useState(7);
+  const [settings, setSettings] = useState({ ...defaultWhatsAppSettings });
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [tokenVisible, setTokenVisible] = useState(false);
 
-  const matrix = useMemo(() => makeQrMatrix(qrSeed), [qrSeed]);
-  const connected = settings.connected;
+  useEffect(() => {
+    let active = true;
+
+    api
+      .get("/settings")
+      .then(({ data }) => {
+        if (!active) return;
+        setSettings({ ...defaultWhatsAppSettings, ...(data.whatsapp || {}) });
+        setLoadError("");
+      })
+      .catch((error) => {
+        if (active) setLoadError(getErrorMessage(error, "Could not load your WhatsApp settings."));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const update = (field, value) => setSettings((current) => ({ ...current, [field]: value }));
+  const configured = Boolean(settings.configured);
+  const isWaapi = settings.provider === "waapi";
 
-  const setConnected = (next) => {
-    const nextSettings = { ...settings, connected: next };
-    setSettings(nextSettings);
-    persist(nextSettings);
-    toast(next ? "WhatsApp connected. New messages will sync shortly." : "WhatsApp disconnected from this workspace.", next ? "success" : "info");
-  };
-
-  const handleSave = () => {
+  const handleSave = async () => {
     setSaving(true);
-    persist(settings);
-    setTimeout(() => {
-      setSaving(false);
+
+    try {
+      const { data } = await api.put("/settings/whatsapp", {
+        phone: settings.phone,
+        displayName: settings.displayName,
+        provider: settings.provider,
+        phoneNumberId: settings.phoneNumberId,
+        waapiInstanceId: settings.waapiInstanceId,
+        autoReply: settings.autoReply
+      });
+      setSettings({ ...defaultWhatsAppSettings, ...(data.whatsapp || {}) });
       toast("WhatsApp settings saved.");
-    }, 450);
+    } catch (error) {
+      toast(getErrorMessage(error, "Could not save your WhatsApp settings."), "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const copy = async (value, label) => {
+    if (!value) {
+      toast(`${label} is not available yet.`, "info");
+      return;
+    }
+
     try {
       await navigator.clipboard.writeText(value);
       toast(`${label} copied.`);
@@ -108,86 +92,82 @@ export default function WhatsAppSettingsPanel() {
   return (
     <div className="settings-grid">
       <div className="settings-main">
+        {loadError ? (
+          <div className="notice notice--danger">
+            <AlertTriangle size={17} />
+            <p>{loadError}</p>
+          </div>
+        ) : null}
+
         <section className="card wa-hero">
           <div className="wa-hero__copy">
             <div className="wa-hero__title">
-              <span className={`wa-logo ${connected ? "" : "is-off"}`}>
+              <span className={`wa-logo ${configured ? "" : "is-off"}`}>
                 <MessageCircle size={24} />
               </span>
               <div>
-                <h3>WhatsApp Business</h3>
-                <p>Connect the number your customers already message.</p>
+                <h3>{isWaapi ? "WhatsApp via WaAPI" : "WhatsApp Cloud API"}</h3>
+                <p>
+                  {isWaapi
+                    ? "Receive customer messages and reply through your WaAPI instance."
+                    : "Receive customer messages and reply through Meta\u2019s official API."}
+                </p>
               </div>
-              <span className={`chip chip--${connected ? "success" : "warning"}`}>
-                <span className="live-dot" /> {connected ? "Connected" : "Not connected"}
+              <span className={`chip chip--${configured ? "success" : "warning"}`}>
+                {configured ? "Credentials configured" : "Not configured"}
               </span>
             </div>
 
-            {connected ? (
-              <>
-                <div className="wa-hero__meta">
-                  <div><span>Number</span><strong>{settings.phone}</strong></div>
-                  <div><span>Display name</span><strong>{settings.displayName}</strong></div>
-                  <div><span>Webhook</span><strong className="text-success">Healthy</strong></div>
-                </div>
-                <div className="wa-hero__actions">
-                  <button type="button" className="btn btn-secondary" onClick={() => toast("Message sync started. Latest messages will appear in your inbox.", "info")}>
-                    <RefreshCw size={15} /> Sync messages
-                  </button>
-                  <button type="button" className="btn btn-ghost btn-ghost--danger" onClick={() => setConnected(false)}>
-                    <Unplug size={15} /> Disconnect
-                  </button>
-                </div>
-                <p className="wa-hero__hint">
-                  <ShieldCheck size={14} /> Securely linked through the official WhatsApp Business API.
-                </p>
-              </>
-            ) : (
-              <div className="wa-connect">
-                <p>Scan the code with WhatsApp Business on your phone to reconnect this workspace.</p>
-                <div className="wa-connect__actions">
-                  <button type="button" className="btn btn-primary" onClick={() => setConnected(true)}>
-                    <PlugZap size={16} /> I have scanned the code
-                  </button>
-                  <button type="button" className="btn btn-secondary" onClick={() => setQrSeed((value) => value + 1)}>
-                    <RefreshCw size={15} /> Refresh QR
-                  </button>
-                </div>
+            <div className="wa-hero__meta">
+              <div><span>Number</span><strong>{settings.phone || "Not set"}</strong></div>
+              <div>
+                <span>{isWaapi ? "Instance ID" : "Phone number ID"}</span>
+                <strong>
+                  {(isWaapi ? settings.waapiInstanceId : settings.phoneNumberId) || "Not set"}
+                </strong>
               </div>
-            )}
+              <div><span>Auto-reply</span><strong>{settings.autoReply ? "On" : "Off"}</strong></div>
+            </div>
+
+            <p className="wa-hero__hint">
+              <ShieldCheck size={14} />
+              {configured
+                ? isWaapi
+                  ? "The server has a WaAPI token and an instance ID, so outgoing messages can be sent."
+                  : "The server has an access token and a phone number ID, so outgoing messages can be sent."
+                : isWaapi
+                  ? "Add WAAPI_TOKEN on the server and save the instance ID to enable sending."
+                  : "Add the server credentials below and save the phone number ID from Meta to enable sending."}
+            </p>
           </div>
 
           <div className="wa-hero__visual">
-            {connected ? (
-              <div className="wa-device">
-                <div className="wa-device__top">
-                  <span className="wa-device__avatar">{settings.displayName?.slice(0, 2).toUpperCase() || "BC"}</span>
-                  <div><strong>{settings.displayName}</strong><span><span className="live-dot" /> Online</span></div>
-                  <MessageCircle size={16} />
-                </div>
-                <div className="wa-device__bubble wa-device__bubble--in">Is the gift box still available?</div>
-                <div className="wa-device__bubble wa-device__bubble--out">
-                  Yes! It&apos;s ₹549 and ships tomorrow. Want me to reserve one?
-                  <CheckCheck size={12} />
-                </div>
-                <div className="wa-device__bubble wa-device__bubble--in">Perfect, please do.</div>
-                <div className="wa-device__typing"><span /><span /><span /></div>
+            <div className="wa-setup">
+              <span className="wa-setup__icon"><Webhook size={20} /></span>
+              <h4>Webhook callback</h4>
+              <div className="copy-field">
+                <input
+                  id="waWebhookHero"
+                  type="text"
+                  value={settings.webhookUrl || ""}
+                  placeholder="Loading…"
+                  readOnly
+                />
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={() => copy(settings.webhookUrl, "Webhook URL")}
+                  aria-label="Copy webhook URL"
+                >
+                  <Copy size={15} />
+                </button>
               </div>
-            ) : (
-              <div className="wa-qr">
-                <div className="wa-qr__frame">
-                  <div className="qr-grid" style={{ "--qr-size": matrix.length }}>
-                    {matrix.flatMap((row, rowIndex) =>
-                      row.map((filled, colIndex) => (
-                        <span key={`${rowIndex}-${colIndex}`} className={filled ? "is-filled" : ""} />
-                      ))
-                    )}
-                  </div>
-                  <span className="wa-qr__logo"><MessageCircle size={14} /></span>
-                </div>
-                <span><QrCode size={14} /> WhatsApp Business · refreshes every 60s</span>
-              </div>
-            )}
+              <p>
+                {isWaapi
+                  ? "Paste this as the webhook URL of your WaAPI instance, then subscribe to the message event."
+                  : "Paste this URL as the callback URL in your Meta app, then subscribe to the messages field."}
+              </p>
+            </div>
           </div>
         </section>
 
@@ -196,46 +176,129 @@ export default function WhatsAppSettingsPanel() {
             <span className="settings-card__icon settings-card__icon--green"><Smartphone size={18} /></span>
             <div>
               <h3>Profile &amp; connection</h3>
-              <p>Details customers see, plus the technical bits for your webhook.</p>
+              <p>Details customers see, plus the identifiers your webhook uses.</p>
             </div>
           </div>
 
           <div className="form-grid">
             <div className="field">
               <label htmlFor="waName">Display name</label>
-              <input id="waName" type="text" value={settings.displayName} onChange={(event) => update("displayName", event.target.value)} />
+              <input
+                id="waName"
+                type="text"
+                value={settings.displayName}
+                onChange={(event) => update("displayName", event.target.value)}
+                disabled={loading || saving}
+              />
             </div>
             <div className="field">
               <label htmlFor="waPhone">WhatsApp number</label>
-              <input id="waPhone" type="tel" value={settings.phone} onChange={(event) => update("phone", event.target.value)} />
+              <input
+                id="waPhone"
+                type="tel"
+                value={settings.phone}
+                onChange={(event) => update("phone", event.target.value)}
+                placeholder="+91 98765 43210"
+                disabled={loading || saving}
+              />
             </div>
+            <div className="field field--full">
+              <label htmlFor="waProvider">Provider</label>
+              <select
+                id="waProvider"
+                value={settings.provider || ""}
+                onChange={(event) => update("provider", event.target.value)}
+                disabled={loading || saving}
+              >
+                <option value="waapi">WaAPI (waapi.app)</option>
+                <option value="meta">Meta WhatsApp Cloud API</option>
+              </select>
+              <p className="field-hint">
+                Blank means auto-detect: WaAPI when the server has a WAAPI token, otherwise Meta.
+              </p>
+            </div>
+            {isWaapi ? (
+              <div className="field field--full">
+                <label htmlFor="waInstanceId">WaAPI instance ID</label>
+                <input
+                  id="waInstanceId"
+                  type="text"
+                  value={settings.waapiInstanceId || ""}
+                  onChange={(event) => update("waapiInstanceId", event.target.value)}
+                  placeholder="From WaAPI → Instances → ID"
+                  disabled={loading || saving}
+                />
+                <p className="field-hint">
+                  Incoming webhook events are matched to this business by the instance ID, so keep it exact.
+                </p>
+              </div>
+            ) : (
+              <div className="field field--full">
+                <label htmlFor="waPhoneNumberId">Phone number ID</label>
+                <input
+                  id="waPhoneNumberId"
+                  type="text"
+                  value={settings.phoneNumberId}
+                  onChange={(event) => update("phoneNumberId", event.target.value)}
+                  placeholder="From Meta → WhatsApp → API setup"
+                  disabled={loading || saving}
+                />
+                <p className="field-hint">
+                  Incoming webhook events are matched to this business by the phone number ID, so keep it exact.
+                </p>
+              </div>
+            )}
             <div className="field field--full">
               <label htmlFor="waWebhook"><Link2 size={14} /> Webhook URL</label>
               <div className="copy-field">
-                <input id="waWebhook" type="text" value={settings.webhookUrl} readOnly />
-                <button type="button" className="icon-btn" onClick={() => copy(settings.webhookUrl, "Webhook URL")} aria-label="Copy webhook URL">
+                <input id="waWebhook" type="text" value={settings.webhookUrl || ""} placeholder="Loading…" readOnly />
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={() => copy(settings.webhookUrl, "Webhook URL")}
+                  aria-label="Copy webhook URL"
+                >
                   <Copy size={15} />
                 </button>
               </div>
-              <p className="field-hint">Incoming messages and delivery receipts are posted here.</p>
+              <p className="field-hint">
+                {isWaapi
+                  ? "Paste this URL as the webhook URL of your WaAPI instance, then subscribe to the message event."
+                  : "Meta posts incoming messages and delivery receipts to this endpoint."}
+              </p>
             </div>
-            <div className="field field--full">
-              <label htmlFor="waToken">Verify token</label>
-              <div className="copy-field">
-                <input
-                  id="waToken"
-                  type={tokenVisible ? "text" : "password"}
-                  value={settings.verifyToken}
-                  readOnly
-                />
-                <button type="button" className="icon-btn" onClick={() => setTokenVisible((value) => !value)} aria-label={tokenVisible ? "Hide token" : "Show token"}>
-                  {tokenVisible ? <EyeOff size={15} /> : <Eye size={15} />}
-                </button>
-                <button type="button" className="icon-btn" onClick={() => copy(settings.verifyToken, "Verify token")} aria-label="Copy verify token">
-                  <Copy size={15} />
-                </button>
+            {isWaapi ? null : (
+              <div className="field field--full">
+                <label htmlFor="waToken">Verify token</label>
+                <div className="copy-field">
+                  <input
+                    id="waToken"
+                    type={tokenVisible ? "text" : "password"}
+                    value={settings.verifyToken || ""}
+                    readOnly
+                  />
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => setTokenVisible((value) => !value)}
+                    aria-label={tokenVisible ? "Hide token" : "Show token"}
+                  >
+                    {tokenVisible ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => copy(settings.verifyToken, "Verify token")}
+                    aria-label="Copy verify token"
+                  >
+                    <Copy size={15} />
+                  </button>
+                </div>
+                <p className="field-hint">
+                  Use this exact token in Meta&apos;s webhook setup. It is generated per business.
+                </p>
               </div>
-            </div>
+            )}
           </div>
 
           <div className="toggle-list toggle-list--boxed">
@@ -243,21 +306,15 @@ export default function WhatsAppSettingsPanel() {
               <span className="toggle-row__icon"><MessageCircle size={17} /></span>
               <div>
                 <strong>Automatic replies</strong>
-                <p>Send the AI greeting to every new WhatsApp conversation.</p>
+                <p>Let the AI assistant answer incoming WhatsApp messages for this number.</p>
               </div>
               <label className="switch">
-                <input type="checkbox" checked={settings.autoReply} onChange={(event) => update("autoReply", event.target.checked)} />
-                <span className="switch__track" />
-              </label>
-            </div>
-            <div className="toggle-row">
-              <span className="toggle-row__icon"><CheckCheck size={17} /></span>
-              <div>
-                <strong>Read receipts</strong>
-                <p>Mark customer messages as read when your team opens them.</p>
-              </div>
-              <label className="switch">
-                <input type="checkbox" checked={settings.readReceipts} onChange={(event) => update("readReceipts", event.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={settings.autoReply}
+                  onChange={(event) => update("autoReply", event.target.checked)}
+                  disabled={loading || saving}
+                />
                 <span className="switch__track" />
               </label>
             </div>
@@ -266,9 +323,9 @@ export default function WhatsAppSettingsPanel() {
           <div className="settings-actions settings-actions--inline">
             <div>
               <strong>Connection settings</strong>
-              <p>Saved to this browser until the settings API is connected.</p>
+              <p>Saved to your business. Server secrets stay in the backend environment.</p>
             </div>
-            <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+            <button type="button" className="btn btn-primary" onClick={handleSave} disabled={loading || saving}>
               {saving ? <Loader2 size={16} className="spin" /> : <Save size={16} />}
               {saving ? "Saving…" : "Save settings"}
             </button>
@@ -277,95 +334,121 @@ export default function WhatsAppSettingsPanel() {
 
         <section className="card settings-card">
           <div className="settings-card__head">
-            <span className="settings-card__icon settings-card__icon--violet"><MessageCircle size={18} /></span>
+            <span className="settings-card__icon settings-card__icon--violet"><Webhook size={18} /></span>
             <div>
-              <h3>Message templates</h3>
-              <p>Pre-approved messages for order updates and re-engagement.</p>
+              <h3>Server credentials</h3>
+              <p>These values live in the backend environment, never in the browser.</p>
             </div>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm settings-card__action"
-              onClick={() => toast("Template creation opens in Meta Business Suite in a later step.", "info")}
-            >
-              New template
-            </button>
           </div>
 
-          <ul className="template-list">
-            {settings.templates.map((template) => (
-              <li key={template.id}>
-                <span className="template-list__icon"><MessageCircle size={15} /></span>
-                <div>
-                  <div className="template-list__title">
-                    <strong>{template.name}</strong>
-                    <span className={`chip chip--${template.status === "approved" ? "success" : "warning"}`}>{template.status}</span>
-                  </div>
-                  <p>{template.body}</p>
-                </div>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={() => copy(template.body, "Template")}
-                  aria-label={`Copy ${template.name} template`}
-                >
-                  <Copy size={15} />
-                </button>
-              </li>
-            ))}
+          <ul className="setup-list">
+            {isWaapi ? (
+              <>
+                <li>
+                  <code>WAAPI_TOKEN</code>
+                  <span>{configured ? "Detected on the server." : "Required to send messages."}</span>
+                </li>
+                <li>
+                  <code>WAAPI_INSTANCE_ID</code>
+                  <span>Instance that owns this WhatsApp number.</span>
+                </li>
+                <li>
+                  <code>WAAPI_WEBHOOK_SECRET</code>
+                  <span>Already embedded in the webhook URL above.</span>
+                </li>
+              </>
+            ) : (
+              <>
+                <li>
+                  <code>WHATSAPP_ACCESS_TOKEN</code>
+                  <span>{configured ? "Detected on the server." : "Required to send messages."}</span>
+                </li>
+                <li>
+                  <code>WHATSAPP_APP_SECRET</code>
+                  <span>Optional. When set, webhook payload signatures are verified.</span>
+                </li>
+                <li>
+                  <code>WHATSAPP_API_VERSION</code>
+                  <span>Optional. Defaults to v20.0.</span>
+                </li>
+                <li>
+                  <code>WHATSAPP_WEBHOOK_URL</code>
+                  <span>Optional. Overrides the webhook URL shown above.</span>
+                </li>
+              </>
+            )}
           </ul>
-        </section>
-
-        <section className="card danger-card">
-          <div className="danger-card__copy">
-            <span className="danger-card__icon"><AlertTriangle size={18} /></span>
-            <div>
-              <h3>Disconnect WhatsApp</h3>
-              <p>Messages will stop syncing and the AI assistant will not reply until you reconnect.</p>
-            </div>
-          </div>
-          <button type="button" className="btn btn-danger btn-sm" onClick={() => setConnected(false)} disabled={!connected}>
-            <Power size={15} /> Disconnect
-          </button>
         </section>
       </div>
 
       <aside className="settings-side">
         <section className="card connection-card">
           <div className="card__head">
-            <div><h3>Connection health</h3><p>Live status of your WhatsApp link.</p></div>
-            <span className={`chip chip--${connected ? "success" : "warning"}`}>{connected ? "Healthy" : "Offline"}</span>
+            <div><h3>Setup checklist</h3><p>Everything {isWaapi ? "WaAPI" : "Meta"} needs before messages flow.</p></div>
+            <span className={`chip chip--${configured ? "success" : "warning"}`}>
+              {configured ? "Ready to send" : "Action needed"}
+            </span>
           </div>
           <ul className="connection-list">
             <li>
-              <span className={`connection-dot ${connected ? "is-on" : ""}`} />
-              <div><strong>Webhook</strong><span>{connected ? "Receiving events" : "Paused"}</span></div>
-              {connected ? <Check size={15} /> : <Unplug size={15} />}
+              <span className={`connection-dot ${(isWaapi ? settings.waapiInstanceId : settings.phoneNumberId) ? "is-on" : ""}`} />
+              <div>
+                <strong>{isWaapi ? "Instance ID" : "Phone number ID"}</strong>
+                <span>
+                  {(isWaapi ? settings.waapiInstanceId : settings.phoneNumberId)
+                    ? "Saved for this business"
+                    : "Add it above and save"}
+                </span>
+              </div>
+              {(isWaapi ? settings.waapiInstanceId : settings.phoneNumberId) ? <Check size={15} /> : <CircleDot size={15} />}
             </li>
             <li>
-              <span className={`connection-dot ${connected ? "is-on" : ""}`} />
-              <div><strong>Message sync</strong><span>{connected ? "Last sync 2 minutes ago" : "Not syncing"}</span></div>
-              <Wifi size={15} />
+              <span className={`connection-dot ${configured ? "is-on" : ""}`} />
+              <div>
+                <strong>{isWaapi ? "WaAPI token" : "Access token"}</strong>
+                <span>{configured ? "Present on the server" : `Set ${isWaapi ? "WAAPI_TOKEN" : "WHATSAPP_ACCESS_TOKEN"}`}</span>
+              </div>
+              {configured ? <Check size={15} /> : <CircleDot size={15} />}
             </li>
+            {isWaapi ? null : (
+              <li>
+                <span className={`connection-dot ${settings.verifyToken ? "is-on" : ""}`} />
+                <div>
+                  <strong>Verify token</strong>
+                  <span>{settings.verifyToken ? "Ready for Meta verification" : "Loading…"}</span>
+                </div>
+                {settings.verifyToken ? <Check size={15} /> : <CircleDot size={15} />}
+              </li>
+            )}
             <li>
-              <span className="connection-dot is-on" />
-              <div><strong>API quota</strong><span>8,420 / 10,000 messages</span></div>
-              <CircleDot size={15} />
+              <span className={`connection-dot ${settings.webhookUrl ? "is-on" : ""}`} />
+              <div>
+                <strong>Webhook URL</strong>
+                <span>{settings.webhookUrl ? `Configure this in ${isWaapi ? "WaAPI" : "Meta"}` : "Loading…"}</span>
+              </div>
+              {settings.webhookUrl ? <Check size={15} /> : <CircleDot size={15} />}
             </li>
           </ul>
-          <div className="quota-bar"><span style={{ width: "84%" }} /></div>
-          <p className="connection-card__note">Quota resets on the 1st of next month.</p>
         </section>
 
         <section className="card settings-card settings-card--tight">
           <div className="settings-card__head">
-            <span className="settings-card__icon settings-card__icon--emerald"><RefreshCw size={16} /></span>
-            <div><h3>Recent activity</h3><p>Connection events from the last 24 hours.</p></div>
+            <span className="settings-card__icon settings-card__icon--emerald"><ShieldCheck size={16} /></span>
+            <div><h3>How messages flow</h3><p>What happens after the provider calls your webhook.</p></div>
           </div>
           <ol className="activity-log">
-            <li><span className="activity-log__dot is-green" /><div><strong>Message delivered</strong><span>Order update to Priya Patel</span></div><time>2m</time></li>
-            <li><span className="activity-log__dot is-green" /><div><strong>Webhook received</strong><span>Incoming message from Aarav</span></div><time>18m</time></li>
-            <li><span className="activity-log__dot is-blue" /><div><strong>Template approved</strong><span>order_confirmation</span></div><time>3h</time></li>
-            <li><span className="activity-log__dot is-amber" /><div><strong>Token refreshed</strong><span>Access token renewed</span></div><time>9h</time></li>
+            <li>
+              <span className="activity-log__dot is-blue" />
+              <div><strong>Incoming message</strong><span>The provider posts the event to the webhook.</span></div>
+            </li>
+            <li>
+              <span className="activity-log__dot is-blue" />
+              <div><strong>Conversation saved</strong><span>The customer and message are stored in your inbox.</span></div>
+            </li>
+            <li>
+              <span className="activity-log__dot is-green" />
+              <div><strong>AI reply</strong><span>The assistant answers if auto-reply is on and sending is configured.</span></div>
+            </li>
           </ol>
         </section>
 
@@ -377,9 +460,14 @@ export default function WhatsAppSettingsPanel() {
             <li>Use approved templates for messages you start.</li>
             <li>Keep your display name consistent with your brand.</li>
           </ul>
-          <button type="button" className="link-btn" onClick={() => toast("WhatsApp policy guide will open in a new tab once docs are added.", "info")}>
-            Read API best practices <ChevronRight size={14} />
-          </button>
+          <a
+            className="link-btn"
+            href={isWaapi ? "https://waapi.app/docs" : "https://developers.facebook.com/docs/whatsapp/cloud-api"}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {isWaapi ? "WaAPI docs" : "Meta Cloud API docs"} <ChevronRight size={14} />
+          </a>
         </section>
       </aside>
     </div>

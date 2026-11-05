@@ -4,11 +4,10 @@ import {
   ArrowLeft,
   CheckCheck,
   Globe,
-  Info,
+  Loader2,
   MessageCircle,
-  MoreHorizontal,
-  Paperclip,
   Phone,
+  RefreshCw,
   Search,
   Send,
   Smile,
@@ -18,7 +17,7 @@ import {
 
 import EmptyState from "../components/EmptyState";
 import { useToast } from "../context/ToastContext";
-import { demoConversations } from "../services/demo";
+import api, { getErrorMessage } from "../services/api";
 import { formatDate, formatTime, initials, isSameDay, timeAgo } from "../utils/format";
 
 const tabs = [
@@ -28,77 +27,121 @@ const tabs = [
   { value: "archived", label: "Archived" }
 ];
 
-const suggestions = [
-  "Thanks for reaching out! Yes, this is available and ready to ship. Would you like me to reserve one for you?",
-  "We deliver in 2–3 working days, and orders above ₹999 ship free. Shall I place the order for you?",
-  "Of course — I can help with that. Could you share your order number so I can take a look?"
-];
-
-const aiReplyFor = (text) => {
-  const message = text.toLowerCase();
-  if (/price|cost|how much|rate/.test(message)) {
-    return "The current price is ₹649, and it ships within 24 hours. I can reserve one for you if you'd like?";
-  }
-  if (/deliver|shipping|ship|when/.test(message)) {
-    return "We deliver in 2–3 working days across India. Orders above ₹999 ship free — would you like me to place this order?";
-  }
-  if (/order|track|status/.test(message)) {
-    return "I can check that for you! Please share your order number and I'll pull up the latest status right away.";
-  }
-  if (/return|refund|damaged|broken/.test(message)) {
-    return "I'm sorry about that. I've flagged this for the owner and we'll arrange a replacement or refund right away.";
-  }
-  return "Thanks for your message! I'm checking this with the team and will get back to you with the details shortly. 😊";
+const STATUS_LABELS = {
+  open: "Open",
+  resolved: "Resolved",
+  archived: "Archived"
 };
 
 export default function Conversations() {
   const { toast } = useToast();
-  const [conversations, setConversations] = useState(() =>
-    demoConversations.map((conversation) => ({ ...conversation, messages: [...conversation.messages] }))
-  );
-  const [selectedId, setSelectedId] = useState(demoConversations[0]._id);
+  const [conversations, setConversations] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+  const [messages, setMessages] = useState([]);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState("");
-  const [typing, setTyping] = useState(false);
+  const [loadingList, setLoadingList] = useState(true);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [drafting, setDrafting] = useState(false);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
   const [mobileChat, setMobileChat] = useState(false);
   const messagesRef = useRef(null);
-  const timers = useRef([]);
-  const fileRef = useRef(null);
 
-  useEffect(
-    () => () => {
-      timers.current.forEach((timer) => clearTimeout(timer));
+  const selected = conversations.find((conversation) => conversation._id === selectedId) || null;
+
+  const loadConversations = useCallback(
+    async ({ quiet = false } = {}) => {
+      if (!quiet) setLoadingList(true);
+
+      try {
+        const { data } = await api.get("/conversations");
+        const list = data.conversations || [];
+        setConversations(list);
+        setSelectedId((current) => {
+          if (current && list.some((item) => item._id === current)) return current;
+          return list[0]?._id || null;
+        });
+      } catch (error) {
+        if (error?.response?.status === 401) return;
+        if (!quiet) toast(getErrorMessage(error, "Could not load conversations."), "error");
+      } finally {
+        if (!quiet) setLoadingList(false);
+      }
     },
-    []
+    [toast]
   );
 
-  const selected = conversations.find((conversation) => conversation._id === selectedId) || conversations[0];
+  useEffect(() => {
+    loadConversations();
+    const timer = setInterval(() => loadConversations({ quiet: true }), 30000);
+    return () => clearInterval(timer);
+  }, [loadConversations]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setMessages([]);
+      return undefined;
+    }
+
+    let active = true;
+    setMessages([]);
+    setLoadingMessages(true);
+
+    const loadMessages = async () => {
+      try {
+        const { data } = await api.get(`/conversations/${selectedId}/messages`);
+        if (!active) return;
+        setMessages(data.messages || []);
+
+        if (data.conversation) {
+          setConversations((current) =>
+            current.map((conversation) =>
+              conversation._id === selectedId ? data.conversation : conversation
+            )
+          );
+        }
+      } catch (error) {
+        if (!active) return;
+        if (error?.response?.status === 401) return;
+        toast(getErrorMessage(error, "Could not load this conversation."), "error");
+      } finally {
+        if (active) setLoadingMessages(false);
+      }
+    };
+
+    loadMessages();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedId, toast]);
 
   useEffect(() => {
     const node = messagesRef.current;
     if (node) node.scrollTop = node.scrollHeight;
-  }, [selected?.messages.length, typing, selectedId]);
+  }, [messages.length, sending, selectedId]);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
+
     return conversations
       .filter((conversation) => {
         if (filter !== "all" && conversation.status !== filter) return false;
         if (!term) return true;
-        return [conversation.customer?.name, conversation.lastMessage]
+        return [conversation.customer?.name, conversation.customer?.phone, conversation.lastMessage]
           .filter(Boolean)
           .join(" ")
           .toLowerCase()
           .includes(term);
       })
-      .sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt));
+      .sort((a, b) => new Date(b.lastMessageAt || b.createdAt) - new Date(a.lastMessageAt || a.createdAt));
   }, [conversations, filter, search]);
 
   const openConversation = (id) => {
     setSelectedId(id);
     setMobileChat(true);
-    setTyping(false);
     setConversations((current) =>
       current.map((conversation) =>
         conversation._id === id ? { ...conversation, unreadCount: 0 } : conversation
@@ -106,93 +149,81 @@ export default function Conversations() {
     );
   };
 
-  const appendMessage = useCallback((conversationId, message) => {
-    setConversations((current) =>
-      current.map((conversation) =>
-        conversation._id === conversationId
-          ? {
-              ...conversation,
-              messages: [...conversation.messages, message],
-              lastMessage: message.text,
-              lastMessageAt: message.createdAt
-            }
-          : conversation
-      )
-    );
-  }, []);
-
-  const handleSend = (event) => {
+  const handleSend = async (event) => {
     event?.preventDefault();
     const text = draft.trim();
-    if (!text || !selected) return;
+    if (!text || !selected || sending) return;
 
-    const outgoing = {
-      _id: `local-${Date.now()}`,
-      direction: "outgoing",
-      text,
-      aiGenerated: false,
-      status: "sent",
-      createdAt: new Date().toISOString()
-    };
+    setSending(true);
 
-    appendMessage(selected._id, outgoing);
-    setDraft("");
-
-    const timer = setTimeout(() => {
-      setTyping(true);
-      const replyTimer = setTimeout(() => {
-        appendMessage(selected._id, {
-          _id: `ai-${Date.now()}`,
-          direction: "outgoing",
-          text: aiReplyFor(text),
-          aiGenerated: true,
-          status: "delivered",
-          createdAt: new Date().toISOString()
-        });
-        setTyping(false);
-      }, 1600);
-      timers.current.push(replyTimer);
-    }, 500);
-
-    timers.current.push(timer);
+    try {
+      const { data } = await api.post(`/conversations/${selected._id}/messages`, { text });
+      setMessages((current) => [...current, data.message]);
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation._id === selected._id
+            ? {
+                ...conversation,
+                lastMessage: text,
+                lastMessageAt: data.message.createdAt,
+                unreadCount: 0
+              }
+            : conversation
+        )
+      );
+      setDraft("");
+    } catch (error) {
+      // Keep the draft so the owner can retry or copy it after a delivery
+      // failure (for example when WhatsApp is not configured yet).
+      toast(getErrorMessage(error, "Could not send this message."), "error");
+    } finally {
+      setSending(false);
+    }
   };
 
-  const handleSuggestion = () => {
-    const suggestion = suggestions[Math.floor(Math.random() * suggestions.length)];
-    setDraft(suggestion);
+  const draftWithAi = async () => {
+    if (!selected || drafting) return;
+
+    const lastIncoming = [...messages].reverse().find((message) => message.direction === "incoming");
+    if (!lastIncoming) {
+      toast("There is no customer message to draft a reply to.", "info");
+      return;
+    }
+
+    setDrafting(true);
+
+    try {
+      const { data } = await api.post("/ai/chat", { message: lastIncoming.text });
+      setDraft(data.reply || "");
+    } catch (error) {
+      toast(getErrorMessage(error, "Could not draft a reply."), "error");
+    } finally {
+      setDrafting(false);
+    }
   };
 
-  const handleFile = (event) => {
-    const file = event.target.files?.[0];
-    if (!file || !selected) return;
+  const toggleStatus = async () => {
+    if (!selected || updatingStatus) return;
 
-    appendMessage(selected._id, {
-      _id: `file-${Date.now()}`,
-      direction: "outgoing",
-      text: `📎 ${file.name}`,
-      aiGenerated: false,
-      status: "sent",
-      createdAt: new Date().toISOString()
-    });
-    toast("Attachment added to this preview conversation.", "info");
-    event.target.value = "";
-  };
-
-  const toggleStatus = () => {
-    if (!selected) return;
     const nextStatus = selected.status === "resolved" ? "open" : "resolved";
-    setConversations((current) =>
-      current.map((conversation) =>
-        conversation._id === selected._id ? { ...conversation, status: nextStatus } : conversation
-      )
-    );
-    toast(nextStatus === "resolved" ? "Conversation marked as resolved." : "Conversation reopened.");
+    setUpdatingStatus(true);
+
+    try {
+      const { data } = await api.put(`/conversations/${selected._id}`, { status: nextStatus });
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation._id === selected._id ? data.conversation : conversation
+        )
+      );
+      toast(nextStatus === "resolved" ? "Conversation marked as resolved." : "Conversation reopened.");
+    } catch (error) {
+      toast(getErrorMessage(error, "Could not update this conversation."), "error");
+    } finally {
+      setUpdatingStatus(false);
+    }
   };
 
-  const groupedMessages = useMemo(() => {
-    if (!selected) return [];
-    return selected.messages;
-  }, [selected]);
+  const openCount = conversations.filter((conversation) => conversation.status === "open").length;
 
   return (
     <div className="page conversations-page">
@@ -200,23 +231,23 @@ export default function Conversations() {
         <div>
           <div className="page-head__eyebrow">
             <span>Inbox</span>
-            <span className="chip chip--preview">Preview</span>
+            <span className="chip chip--soft">{openCount} open</span>
           </div>
           <h2>Conversations</h2>
-          <p>Your WhatsApp and web chats, with your AI assistant handling the first reply.</p>
+          <p>WhatsApp messages your customers send, stored against their customer record.</p>
         </div>
         <div className="page-head__actions">
-          <span className="ai-status-pill">
-            <Sparkles size={15} /> AI auto-reply on
-          </span>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => loadConversations()}
+            disabled={loadingList}
+          >
+            <RefreshCw size={16} className={loadingList ? "spin" : ""} /> Refresh
+          </button>
           <Link to="/settings/ai" className="btn btn-secondary">AI instructions</Link>
         </div>
       </header>
-
-      <div className="notice notice--preview notice--slim">
-        <Info size={16} />
-        <p>This inbox is a design preview. Connect the messaging API to send and receive real messages.</p>
-      </div>
 
       <section className={`inbox ${mobileChat ? "is-chat-open" : ""}`}>
         <aside className="inbox__list">
@@ -240,33 +271,37 @@ export default function Conversations() {
                   onClick={() => setFilter(tab.value)}
                 >
                   {tab.label}
-                  {tab.value === "open" ? (
-                    <span>{conversations.filter((item) => item.status === "open").length}</span>
-                  ) : null}
+                  {tab.value === "open" ? <span>{openCount}</span> : null}
                 </button>
               ))}
             </div>
           </div>
 
           <div className="conversation-list">
-            {filtered.length ? (
+            {loadingList && !conversations.length ? (
+              <div className="skeleton-list skeleton-list--padded">
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <div className="skeleton skeleton--row" key={index} />
+                ))}
+              </div>
+            ) : filtered.length ? (
               filtered.map((conversation) => (
                 <button
                   type="button"
                   key={conversation._id}
-                  className={`conversation ${selected?._id === conversation._id ? "is-active" : ""}`}
+                  className={`conversation ${selectedId === conversation._id ? "is-active" : ""}`}
                   onClick={() => openConversation(conversation._id)}
                 >
                   <span className="avatar">{initials(conversation.customer?.name || "Guest")}</span>
                   <span className="conversation__body">
                     <span className="conversation__top">
                       <strong>{conversation.customer?.name || "Guest"}</strong>
-                      <time>{timeAgo(conversation.lastMessageAt)}</time>
+                      <time>{timeAgo(conversation.lastMessageAt || conversation.createdAt)}</time>
                     </span>
                     <span className="conversation__bottom">
                       <em>
                         {conversation.channel === "whatsapp" ? <MessageCircle size={12} /> : <Globe size={12} />}
-                        {conversation.lastMessage}
+                        {conversation.lastMessage || "No messages yet"}
                       </em>
                       {conversation.unreadCount ? <b>{conversation.unreadCount}</b> : null}
                     </span>
@@ -276,15 +311,19 @@ export default function Conversations() {
             ) : (
               <EmptyState
                 compact
-                icon={Search}
-                title="No conversations found"
-                description="Try another search or filter."
+                icon={MessageCircle}
+                title={conversations.length ? "No conversations found" : "No conversations yet"}
+                description={
+                  conversations.length
+                    ? "Try another search or filter."
+                    : "Messages appear here when customers contact your WhatsApp number."
+                }
               />
             )}
           </div>
 
           <div className="inbox__list-foot">
-            <span><span className="live-dot" /> {conversations.filter((item) => item.status === "open").length} open</span>
+            <span><span className="live-dot" /> {openCount} open</span>
             <span>{conversations.length} total</span>
           </div>
         </aside>
@@ -292,50 +331,57 @@ export default function Conversations() {
         {selected ? (
           <div className="inbox__chat">
             <header className="chat-head">
-              <button type="button" className="icon-btn chat-head__back" onClick={() => setMobileChat(false)} aria-label="Back to conversations">
+              <button
+                type="button"
+                className="icon-btn chat-head__back"
+                onClick={() => setMobileChat(false)}
+                aria-label="Back to conversations"
+              >
                 <ArrowLeft size={18} />
               </button>
               <span className="avatar">{initials(selected.customer?.name || "Guest")}</span>
               <div className="chat-head__person">
                 <strong>{selected.customer?.name || "Guest"}</strong>
                 <span>
-                  {selected.customer?.phone || "No phone"} ·
-                  <em className="chat-head__online"><span className="live-dot" /> online</em>
+                  {selected.customer?.phone || "No phone"} · {selected.channel || "whatsapp"}
                 </span>
               </div>
               <span className={`chip chip--${selected.status === "resolved" ? "success" : "info"}`}>
-                {selected.status === "resolved" ? "Resolved" : "Open"}
+                {STATUS_LABELS[selected.status] || selected.status}
               </span>
               <div className="chat-head__actions">
                 <button
                   type="button"
                   className="btn btn-secondary btn-sm"
                   onClick={toggleStatus}
+                  disabled={updatingStatus}
                 >
-                  <CheckCircle2 size={15} />
+                  {updatingStatus ? <Loader2 size={15} className="spin" /> : <CheckCircle2 size={15} />}
                   {selected.status === "resolved" ? "Reopen" : "Resolve"}
                 </button>
                 <a className="icon-btn" href={`tel:${selected.customer?.phone || ""}`} aria-label="Call customer">
                   <Phone size={17} />
                 </a>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={() => toast("Conversation options will be available with the messaging API.", "info")}
-                  aria-label="More options"
-                >
-                  <MoreHorizontal size={18} />
-                </button>
               </div>
             </header>
 
             <div className="chat-body" ref={messagesRef}>
-              <div className="chat-day">
-                <span>{formatDate(selected.messages[0]?.createdAt || new Date())}</span>
-              </div>
+              {loadingMessages && !messages.length ? (
+                <div className="chat-loading">
+                  <Loader2 size={18} className="spin" /> Loading conversation…
+                </div>
+              ) : null}
 
-              {groupedMessages.map((message, index) => {
-                const previous = groupedMessages[index - 1];
+              {messages.length ? (
+                <div className="chat-day">
+                  <span>{formatDate(messages[0].createdAt)}</span>
+                </div>
+              ) : !loadingMessages ? (
+                <div className="chat-loading">No messages in this conversation yet.</div>
+              ) : null}
+
+              {messages.map((message, index) => {
+                const previous = messages[index - 1];
                 const showDivider = previous && !isSameDay(previous.createdAt, message.createdAt);
                 return (
                   <div key={message._id}>
@@ -356,10 +402,15 @@ export default function Conversations() {
                         <span className="message__meta">
                           {formatTime(message.createdAt)}
                           {message.direction === "outgoing" ? (
-                            message.status === "delivered" || message.status === "read" ? (
-                              <CheckCheck size={13} className="message__checks" />
+                            message.status === "failed" ? (
+                              <em className="message__failed">Failed</em>
                             ) : (
-                              <CheckCheck size={13} className="message__checks is-sent" />
+                              <CheckCheck
+                                size={13}
+                                className={`message__checks ${
+                                  message.status === "delivered" || message.status === "read" ? "" : "is-sent"
+                                }`}
+                              />
                             )
                           ) : null}
                         </span>
@@ -368,15 +419,6 @@ export default function Conversations() {
                   </div>
                 );
               })}
-
-              {typing ? (
-                <div className="message message--out">
-                  <div className="message__bubble message__bubble--typing">
-                    <span className="typing-dots"><i /><i /><i /></span>
-                    <em>AI assistant is typing…</em>
-                  </div>
-                </div>
-              ) : null}
             </div>
 
             <form className="chat-composer" onSubmit={handleSend}>
@@ -384,20 +426,12 @@ export default function Conversations() {
                 <button
                   type="button"
                   className="icon-btn"
-                  onClick={handleSuggestion}
-                  title="Suggest a reply"
-                  aria-label="Suggest a reply"
+                  onClick={draftWithAi}
+                  disabled={drafting || !messages.length}
+                  title="Draft a reply with AI"
+                  aria-label="Draft a reply with AI"
                 >
-                  <Sparkles size={18} />
-                </button>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={() => fileRef.current?.click()}
-                  title="Attach a file"
-                  aria-label="Attach a file"
-                >
-                  <Paperclip size={18} />
+                  {drafting ? <Loader2 size={18} className="spin" /> : <Sparkles size={18} />}
                 </button>
                 <button
                   type="button"
@@ -408,7 +442,6 @@ export default function Conversations() {
                 >
                   <Smile size={18} />
                 </button>
-                <input ref={fileRef} type="file" hidden onChange={handleFile} />
               </div>
               <div className="chat-composer__input">
                 <textarea
@@ -425,14 +458,23 @@ export default function Conversations() {
                 />
                 <span className="chat-composer__hint">Enter to send · Shift + Enter for a new line</span>
               </div>
-              <button type="submit" className="chat-send" disabled={!draft.trim()} aria-label="Send message">
-                <Send size={18} />
+              <button
+                type="submit"
+                className="chat-send"
+                disabled={!draft.trim() || sending}
+                aria-label="Send message"
+              >
+                {sending ? <Loader2 size={18} className="spin" /> : <Send size={18} />}
               </button>
             </form>
           </div>
         ) : (
           <div className="inbox__empty">
-            <EmptyState icon={MessageCircle} title="Select a conversation" description="Choose a chat from the list to see the full history." />
+            <EmptyState
+              icon={MessageCircle}
+              title="Select a conversation"
+              description="Choose a chat from the list to see the full history."
+            />
           </div>
         )}
       </section>

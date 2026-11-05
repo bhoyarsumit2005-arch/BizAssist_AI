@@ -6,7 +6,6 @@ import {
   ArrowUpRight,
   CalendarDays,
   IndianRupee,
-  Info,
   Package,
   Plus,
   RefreshCw,
@@ -21,8 +20,8 @@ import EmptyState from "../components/EmptyState";
 import { AreaChart } from "../components/Charts";
 import { useAuth } from "../context/AuthContext";
 import api from "../services/api";
-import { demoCustomers, demoOrders, demoProducts } from "../services/demo";
 import {
+  averageOrderValue,
   buildOrderCountSeries,
   buildRevenueSeries,
   getOrdersInRange,
@@ -47,7 +46,6 @@ export default function Dashboard() {
   const [orders, setOrders] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [preview, setPreview] = useState(false);
   const [warning, setWarning] = useState("");
   const [metric, setMetric] = useState("revenue");
 
@@ -70,10 +68,10 @@ export default function Dashboard() {
     const anySuccess = results.some((result) => result.status === "fulfilled");
 
     if (!anySuccess) {
-      setProducts(demoProducts);
-      setOrders(demoOrders);
-      setCustomers(demoCustomers);
-      setPreview(true);
+      setProducts([]);
+      setOrders([]);
+      setCustomers([]);
+      setWarning("Could not load your store data. Check that the API is running and try again.");
       setLoading(false);
       return;
     }
@@ -86,7 +84,6 @@ export default function Dashboard() {
     setProducts(productResult.status === "fulfilled" ? productResult.value.data.products || [] : []);
     setOrders(orderResult.status === "fulfilled" ? orderResult.value.data.orders || [] : []);
     setCustomers(customerResult.status === "fulfilled" ? customerResult.value.data.customers || [] : []);
-    setPreview(false);
     setLoading(false);
   }, []);
 
@@ -156,10 +153,9 @@ export default function Dashboard() {
         <div>
           <div className="page-head__eyebrow">
             <span>{greeting()}, {first}</span>
-            {preview ? <span className="chip chip--preview">Sample data</span> : null}
           </div>
           <h2>Here&apos;s how {business?.name || "your business"} is doing.</h2>
-          <p>Orders, revenue, and customer activity from the last 30 days.</p>
+          <p>Orders, paid revenue, and customer activity from the last 30 days.</p>
         </div>
         <div className="page-head__actions">
           <button type="button" className="btn btn-secondary" onClick={load} disabled={loading}>
@@ -170,16 +166,6 @@ export default function Dashboard() {
           </Link>
         </div>
       </header>
-
-      {preview ? (
-        <div className="notice notice--preview">
-          <Info size={17} />
-          <p>
-            <strong>Design preview.</strong> The API is unreachable, so this dashboard is populated with sample data.
-            Start the backend on port 5000 to see live figures.
-          </p>
-        </div>
-      ) : null}
 
       {warning ? (
         <div className="notice notice--warning">
@@ -202,10 +188,10 @@ export default function Dashboard() {
           <>
             <StatCard
               icon={IndianRupee}
-              label="Revenue"
+              label="Paid revenue"
               value={formatCurrency(view.revenue)}
               change={view.revenueChange}
-              hint="Last 30 days · excludes cancelled"
+              hint="Last 30 days · paid orders only"
               tone="emerald"
               sparkline={sparkRevenue}
             />
@@ -251,9 +237,8 @@ export default function Dashboard() {
                 className={metric === "revenue" ? "is-active" : ""}
                 onClick={() => setMetric("revenue")}
               >
-                Revenue
-              </button>
-              <button
+                Paid revenue
+              </button>              <button
                 type="button"
                 className={metric === "orders" ? "is-active" : ""}
                 onClick={() => setMetric("orders")}
@@ -269,7 +254,7 @@ export default function Dashboard() {
                 : formatNumber(getOrdersInRange(orders, 30).length)}
             </strong>
             <span>
-              {metric === "revenue" ? "in revenue" : "orders placed"} ·{" "}
+              {metric === "revenue" ? "in paid revenue" : "orders placed"} ·{" "}
               <em className="positive-note">
                 <TrendingUp size={12} /> live from your store
               </em>
@@ -278,7 +263,7 @@ export default function Dashboard() {
           {loading ? (
             <div className="skeleton skeleton--chart" />
           ) : metric === "revenue" ? (
-            <AreaChart data={revenueSeries} color="#7c3aed" label="Revenue" height={252} />
+            <AreaChart data={revenueSeries} color="#7c3aed" label="Paid revenue" height={252} />
           ) : (
             <AreaChart
               data={orderSeries}
@@ -320,7 +305,9 @@ export default function Dashboard() {
             </Link>
           </div>
           <div className="ai-panel__footer">
-            <span className="live-dot" /> Auto-replies are enabled for new messages
+            <Link to="/settings/ai" className="ai-panel__link">
+              Configure auto-replies in Settings <ArrowRight size={14} />
+            </Link>
           </div>
         </aside>
       </section>
@@ -459,8 +446,8 @@ export default function Dashboard() {
         <div className="mini-metric">
           <span className="mini-metric__icon mini-metric__icon--emerald"><IndianRupee size={16} /></span>
           <div>
-            <span>Avg. order value</span>
-            <strong>{formatCurrency(sumRevenue(orders) / Math.max(orders.filter((order) => order.status !== "cancelled").length, 1))}</strong>
+            <span>Avg. paid order</span>
+            <strong>{formatCurrency(averageOrderValue(orders))}</strong>
           </div>
         </div>
         <div className="mini-metric">

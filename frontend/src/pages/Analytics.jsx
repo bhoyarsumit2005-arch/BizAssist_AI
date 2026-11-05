@@ -6,7 +6,6 @@ import {
   CreditCard,
   Download,
   IndianRupee,
-  Info,
   RefreshCw,
   ShoppingCart,
   TrendingUp,
@@ -18,13 +17,13 @@ import EmptyState from "../components/EmptyState";
 import { AreaChart, BarList, DonutChart } from "../components/Charts";
 import { useToast } from "../context/ToastContext";
 import api from "../services/api";
-import { demoCustomers, demoOrders } from "../services/demo";
 import {
   averageOrderValue,
   buildRevenueSeries,
   getOrdersInRange,
   getStatusBreakdown,
   getTopProducts,
+  isPaid,
   percentChange,
   sumRevenue
 } from "../utils/metrics";
@@ -91,7 +90,6 @@ export default function Analytics() {
   const [orders, setOrders] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [preview, setPreview] = useState(false);
   const [range, setRange] = useState(30);
 
   const load = useCallback(async () => {
@@ -102,18 +100,8 @@ export default function Analytics() {
     );
     if (unauthorized) return;
 
-    const anySuccess = results.some((result) => result.status === "fulfilled");
-    if (!anySuccess) {
-      setOrders(demoOrders);
-      setCustomers(demoCustomers);
-      setPreview(true);
-      setLoading(false);
-      return;
-    }
-
     setOrders(results[0].status === "fulfilled" ? results[0].value.data.orders || [] : []);
     setCustomers(results[1].status === "fulfilled" ? results[1].value.data.customers || [] : []);
-    setPreview(false);
     setLoading(false);
   }, []);
 
@@ -154,6 +142,7 @@ export default function Analytics() {
       revenueChange: prevRevenue ? percentChange(revenue, prevRevenue) : null,
       ordersChange: previous.length ? percentChange(current.length, previous.length) : null,
       average: averageOrderValue(current),
+      paidOrders: current.filter(isPaid).length,
       averageChange: previous.length
         ? percentChange(averageOrderValue(current), averageOrderValue(previous))
         : null,
@@ -190,9 +179,9 @@ export default function Analytics() {
 
     const csv = toCsv(rows, [
       { label: "Date", value: (row) => formatDate(row.date) },
-      { label: "Orders", value: (row) => row.orders },
-      { label: "Revenue", value: (row) => row.value },
-      { label: "Average order", value: (row) => (row.orders ? Math.round(row.value / row.orders) : 0) }
+      { label: "Paid orders", value: (row) => row.orders },
+      { label: "Paid revenue", value: (row) => row.value },
+      { label: "Average paid order", value: (row) => (row.orders ? Math.round(row.value / row.orders) : 0) }
     ]);
 
     downloadCsv(`bizassist-sales-${range}d-${new Date().toISOString().slice(0, 10)}.csv`, csv);
@@ -207,7 +196,6 @@ export default function Analytics() {
         <div>
           <div className="page-head__eyebrow">
             <span>Reports</span>
-            {preview ? <span className="chip chip--preview">Sample data</span> : null}
           </div>
           <h2>Analytics</h2>
           <p>Understand what sells, who buys, and where your growth comes from.</p>
@@ -234,13 +222,6 @@ export default function Analytics() {
         </div>
       </header>
 
-      {preview ? (
-        <div className="notice notice--preview">
-          <Info size={17} />
-          <p><strong>Design preview.</strong> The API is unreachable, so these reports use sample orders and customers.</p>
-        </div>
-      ) : null}
-
       {!loading && !hasData ? (
         <div className="card">
           <EmptyState
@@ -255,7 +236,7 @@ export default function Analytics() {
       <section className="analytics-kpis" aria-label="Sales summary">
         <article className="analytics-kpi">
           <span className="analytics-kpi__icon analytics-kpi__icon--emerald"><IndianRupee size={18} /></span>
-          <span className="analytics-kpi__label">Revenue</span>
+          <span className="analytics-kpi__label">Paid revenue</span>
           <strong>{formatCurrency(view.revenue)}</strong>
           {view.revenueChange !== null ? (
             <span className={`analytics-kpi__change ${view.revenueChange >= 0 ? "is-up" : "is-down"}`}>
@@ -281,14 +262,14 @@ export default function Analytics() {
 
         <article className="analytics-kpi">
           <span className="analytics-kpi__icon analytics-kpi__icon--violet"><TrendingUp size={18} /></span>
-          <span className="analytics-kpi__label">Average order value</span>
+          <span className="analytics-kpi__label">Average paid order</span>
           <strong>{formatCurrency(view.average)}</strong>
           {view.averageChange !== null ? (
             <span className={`analytics-kpi__change ${view.averageChange >= 0 ? "is-up" : "is-down"}`}>
               <ArrowUpRight size={13} /> {Math.abs(view.averageChange)}% vs previous period
             </span>
           ) : (
-            <span className="analytics-kpi__change">Across {view.current.length} orders</span>
+            <span className="analytics-kpi__change">Across {view.paidOrders} paid orders</span>
           )}
         </article>
 
@@ -311,15 +292,15 @@ export default function Analytics() {
           <div className="card__head">
             <div>
               <span className="section-eyebrow"><BarChart3 size={14} /> Sales report</span>
-              <h3>Revenue over time</h3>
-              <p>Daily revenue for the last {range} days.</p>
+              <h3>Paid revenue over time</h3>
+              <p>Daily revenue from paid orders in the last {range} days.</p>
             </div>
             <span className="chip chip--soft">{formatCompactCurrency(view.revenue)} total</span>
           </div>
           {loading ? (
             <div className="skeleton skeleton--chart" />
           ) : (
-            <AreaChart data={revenueSeries} color="#7c3aed" height={280} label="Revenue" />
+            <AreaChart data={revenueSeries} color="#7c3aed" height={280} label="Paid revenue" />
           )}
         </article>
 
@@ -349,7 +330,7 @@ export default function Analytics() {
       <section className="analytics-grid analytics-grid--three">
         <article className="card">
           <div className="card__head">
-            <div><h3>Top products</h3><p>Ranked by revenue in this period.</p></div>
+            <div><h3>Top products</h3><p>Ranked by paid revenue in this period.</p></div>
           </div>
           {view.topProducts.length ? (
             <BarList
@@ -373,7 +354,7 @@ export default function Analytics() {
 
         <article className="card donut-card">
           <div className="card__head">
-            <div><h3>Payment mix</h3><p>How customers are paying.</p></div>
+            <div><h3>Payment status</h3><p>How order payments currently stand.</p></div>
           </div>
           {view.paymentSegments.length ? (
             <div className="donut-card__body donut-card__body--stacked">
@@ -427,7 +408,7 @@ export default function Analytics() {
         <div className="table-wrap">
           <table className="data-table data-table--compact">
             <thead>
-              <tr><th>Date</th><th>Orders</th><th>Revenue</th><th>Average order</th></tr>
+              <tr><th>Date</th><th>Paid orders</th><th>Paid revenue</th><th>Average paid order</th></tr>
             </thead>
             <tbody>
               {view.daily.map((row) => (
@@ -442,7 +423,7 @@ export default function Analytics() {
           </table>
         </div>
         <footer className="table-footer">
-          <span>Revenue excludes cancelled orders.</span>
+          <span>Revenue counts paid, non-cancelled orders only.</span>
           <span className="muted">All amounts in INR</span>
         </footer>
       </section>

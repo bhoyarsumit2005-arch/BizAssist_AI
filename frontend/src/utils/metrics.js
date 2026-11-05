@@ -2,11 +2,15 @@ import { getStatusMeta } from "./format";
 
 export const isCancelled = (order) => order?.status === "cancelled";
 
+// Revenue is money actually collected: an order only counts once its payment
+// has been recorded. Pending/unpaid orders are still visible everywhere else.
+export const isPaid = (order) => !isCancelled(order) && order?.paymentStatus === "paid";
+
 export const sumRevenue = (orders = []) =>
-  orders.reduce((total, order) => (isCancelled(order) ? total : total + (Number(order.totalAmount) || 0)), 0);
+  orders.reduce((total, order) => (isPaid(order) ? total + (Number(order.totalAmount) || 0) : total), 0);
 
 export const averageOrderValue = (orders = []) => {
-  const valid = orders.filter((order) => !isCancelled(order));
+  const valid = orders.filter(isPaid);
   if (!valid.length) return 0;
   return sumRevenue(valid) / valid.length;
 };
@@ -38,7 +42,7 @@ export const buildRevenueSeries = (orders = [], days = 30) => {
   const first = buckets[0]?.date.getTime() || 0;
 
   orders.forEach((order) => {
-    if (isCancelled(order)) return;
+    if (!isPaid(order)) return;
     const created = new Date(order.createdAt);
     if (Number.isNaN(created.getTime())) return;
 
@@ -109,7 +113,7 @@ export const getTopProducts = (orders = [], limit = 5) => {
   const map = new Map();
 
   orders.forEach((order) => {
-    if (isCancelled(order)) return;
+    if (!isPaid(order)) return;
     (order.items || []).forEach((item) => {
       const key = item.name || "Unnamed item";
       const current = map.get(key) || { name: key, quantity: 0, revenue: 0 };
@@ -132,7 +136,7 @@ export const getCustomerStats = (orders = []) => {
 
     const current = map.get(id) || { orders: 0, spent: 0, lastOrderAt: null, name: customer?.name, phone: customer?.phone };
     current.orders += 1;
-    if (!isCancelled(order)) current.spent += Number(order.totalAmount) || 0;
+    if (isPaid(order)) current.spent += Number(order.totalAmount) || 0;
     const created = order.createdAt;
     if (!current.lastOrderAt || new Date(created) > new Date(current.lastOrderAt)) current.lastOrderAt = created;
     map.set(id, current);

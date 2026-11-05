@@ -8,10 +8,12 @@ import Analytics from "./pages/Analytics";
 import Conversations from "./pages/Conversations";
 import Customers from "./pages/Customers";
 import Dashboard from "./pages/Dashboard";
+import ForgotPassword from "./pages/ForgotPassword";
 import Login from "./pages/Login";
 import Orders from "./pages/Orders";
 import Products from "./pages/Products";
 import Register from "./pages/Register";
+import ResetPassword from "./pages/ResetPassword";
 import Settings from "./pages/Settings";
 
 function Splash() {
@@ -37,6 +39,16 @@ function ProtectedRoute() {
   return <Outlet />;
 }
 
+function OwnerRoute() {
+  const { user, isAuthenticated, loading } = useAuth();
+
+  if (loading) return <Splash />;
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (user?.role !== "owner") return <Navigate to="/dashboard" replace />;
+
+  return <Outlet />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -45,6 +57,8 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
 
             <Route element={<ProtectedRoute />}>
               <Route element={<AppLayout />}>
@@ -55,9 +69,12 @@ export default function App() {
                 <Route path="/customers" element={<Customers />} />
                 <Route path="/conversations" element={<Conversations />} />
                 <Route path="/analytics" element={<Analytics />} />
-                <Route path="/settings" element={<Navigate to="/settings/ai" replace />} />
-                <Route path="/settings/ai" element={<Settings />} />
-                <Route path="/settings/whatsapp" element={<Settings />} />
+                <Route element={<OwnerRoute />}>
+                  <Route path="/settings" element={<Navigate to="/settings/ai" replace />} />
+                  <Route path="/settings/ai" element={<Settings />} />
+                  <Route path="/settings/whatsapp" element={<Settings />} />
+                  <Route path="/settings/team" element={<Settings />} />
+                </Route>
               </Route>
             </Route>
 

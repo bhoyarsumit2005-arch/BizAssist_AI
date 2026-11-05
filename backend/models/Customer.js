@@ -11,23 +11,34 @@ const customerSchema = new mongoose.Schema({
   name: {
     type: String,
     required: true,
-    trim: true
+    trim: true,
+    maxlength: 120
   },
 
   phone: {
     type: String,
-    trim: true
+    trim: true,
+    maxlength: 32
   },
 
   email: {
     type: String,
     lowercase: true,
-    trim: true
+    trim: true,
+    maxlength: 254
   },
 
-  address: String,
+  address: {
+    type: String,
+    trim: true,
+    maxlength: 300
+  },
 
-  notes: String,
+  notes: {
+    type: String,
+    trim: true,
+    maxlength: 1000
+  },
 
   isActive: {
     type: Boolean,

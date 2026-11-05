@@ -46,8 +46,8 @@ const initialForm = {
 
 const strengthOf = (password) => {
   let score = 0;
-  if (password.length >= 6) score += 1;
-  if (password.length >= 10) score += 1;
+  if (password.length >= 8) score += 1;
+  if (password.length >= 12) score += 1;
   if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score += 1;
   if (/\d/.test(password) || /[^A-Za-z0-9]/.test(password)) score += 1;
   return score;
@@ -76,7 +76,7 @@ export default function Register() {
   const validate = () => {
     if (!form.name.trim()) return "Enter your full name.";
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return "Enter a valid email address.";
-    if (form.password.length < 6) return "Password must be at least 6 characters.";
+    if (form.password.length < 8) return "Password must be at least 8 characters.";
     if (form.password.length > 72) return "Password must be 72 characters or fewer.";
     if (form.password !== form.confirmPassword) return "Passwords do not match.";
     if (!form.businessName.trim()) return "Enter your shop or business name.";
@@ -191,7 +191,7 @@ export default function Register() {
                       id="password"
                       type={showPassword ? "text" : "password"}
                       autoComplete="new-password"
-                      placeholder="At least 6 characters"
+                      placeholder="At least 8 characters"
                       value={form.password}
                       onChange={update("password")}
                     />

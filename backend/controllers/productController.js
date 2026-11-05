@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 
 import Product from "../models/Product.js";
 import { getBusinessId } from "../utils/businessScope.js";
+import { LIMITS, readInteger, readText } from "../utils/validation.js";
 
 /**
  * Whitelisted upsert fields. `req.body` is never spread into the document,
@@ -11,37 +12,37 @@ const buildProductFields = (body) => {
   const fields = {};
 
   if (body.name !== undefined) {
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    if (!name) throw { status: 400, message: "Product name cannot be empty" };
+    const name = readText(body.name, "name", { max: LIMITS.productName, required: true });
     fields.name = name;
   }
 
   if (body.price !== undefined) {
     const price = Number(body.price);
-    if (!Number.isFinite(price) || price < 0) {
-      throw { status: 400, message: "Price must be a number of 0 or more" };
+    if (!Number.isFinite(price) || price < 0 || price > LIMITS.productPriceMax) {
+      throw {
+        status: 400,
+        message: `Price must be a number between 0 and ${LIMITS.productPriceMax}`
+      };
     }
     fields.price = price;
   }
 
   if (body.stock !== undefined) {
-    const stock = Number(body.stock);
-    if (!Number.isFinite(stock) || stock < 0) {
-      throw { status: 400, message: "Stock must be a number of 0 or more" };
-    }
-    fields.stock = stock;
+    fields.stock = readInteger(body.stock, "stock", { min: 0, max: LIMITS.productStockMax });
   }
 
   if (body.unit !== undefined) {
-    fields.unit = typeof body.unit === "string" && body.unit.trim() ? body.unit.trim() : "piece";
+    fields.unit =
+      readText(body.unit, "unit", { max: LIMITS.productUnit }) || "piece";
   }
 
   if (body.description !== undefined) {
-    fields.description = typeof body.description === "string" ? body.description.trim() : "";
+    fields.description =
+      readText(body.description, "description", { max: LIMITS.productDescription }) || "";
   }
 
   if (body.image !== undefined) {
-    fields.image = typeof body.image === "string" ? body.image.trim() : "";
+    fields.image = readText(body.image, "image", { max: LIMITS.productImage }) || "";
   }
 
   if (body.isActive !== undefined) {
@@ -127,7 +128,7 @@ export const updateProduct = async (req, res) => {
     const product = await Product.findOneAndUpdate(
       { _id: id, businessId },
       { $set: fields },
-      { new: true, runValidators: true }
+      { returnDocument: "after", runValidators: true }
     );
 
     if (!product) {

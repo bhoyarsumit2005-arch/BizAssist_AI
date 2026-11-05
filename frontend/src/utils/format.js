@@ -99,6 +99,29 @@ export const getStatusMeta = (status) =>
     tone: "neutral"
   };
 
+/**
+ * Mirrors the backend state machine. Keep the two in sync: the API rejects
+ * anything outside these moves with a 409.
+ */
+export const orderStatusTransitions = {
+  pending: ["confirmed", "cancelled"],
+  confirmed: ["processing", "cancelled"],
+  processing: ["dispatched", "cancelled"],
+  dispatched: ["delivered"],
+  delivered: [],
+  cancelled: []
+};
+
+export const getAllowedTransitions = (status) => orderStatusTransitions[status] || [];
+
+/** The current status plus every valid next status, for a status dropdown. */
+export const getStatusOptions = (status) => {
+  const allowed = getAllowedTransitions(status);
+  return orderStatuses.filter(
+    (option) => option.value === status || allowed.includes(option.value)
+  );
+};
+
 export const toCsv = (rows, columns) => {
   const escape = (value) => {
     const text = value === null || value === undefined ? "" : String(value);

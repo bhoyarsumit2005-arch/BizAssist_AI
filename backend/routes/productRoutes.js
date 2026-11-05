@@ -1,20 +1,21 @@
 import express from "express";
 
 import {
-  listProducts,
   createProduct,
-  updateProduct,
-  deleteProduct
+  deleteProduct,
+  listProducts,
+  updateProduct
 } from "../controllers/productController.js";
 import protect from "../middleware/authMiddleware.js";
+import { requireOwner } from "../middleware/authorize.js";
 
 const router = express.Router();
 
-// Every route requires a valid JWT; controllers scope queries by
-// req.user.businessId.
+// Staff can read the catalogue while fulfilling orders, but only owners
+// change prices, stock, or delete products.
 router.get("/", protect, listProducts);
-router.post("/", protect, createProduct);
-router.put("/:id", protect, updateProduct);
-router.delete("/:id", protect, deleteProduct);
+router.post("/", protect, requireOwner, createProduct);
+router.put("/:id", protect, requireOwner, updateProduct);
+router.delete("/:id", protect, requireOwner, deleteProduct);
 
 export default router;

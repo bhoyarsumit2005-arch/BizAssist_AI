@@ -27,7 +27,10 @@ const conversationSchema = new mongoose.Schema({
     default: "open"
   },
 
-  lastMessage: String,
+  lastMessage: {
+    type: String,
+    maxlength: 4096
+  },
 
   lastMessageAt: Date,
 

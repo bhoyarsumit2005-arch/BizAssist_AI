@@ -29,12 +29,20 @@ const messageSchema = new mongoose.Schema({
   text: {
     type: String,
     required: true,
-    trim: true
+    trim: true,
+    maxlength: 4096
   },
 
   aiGenerated: {
     type: Boolean,
     default: false
+  },
+
+  // Meta's message id, used to match delivery/read status callbacks and to
+  // ignore duplicate webhook deliveries.
+  providerMessageId: {
+    type: String,
+    index: true
   },
 
   status: {
@@ -47,5 +55,6 @@ const messageSchema = new mongoose.Schema({
 });
 
 messageSchema.index({ conversationId: 1, createdAt: 1 });
+messageSchema.index({ businessId: 1, providerMessageId: 1 });
 
 export default mongoose.model("Message", messageSchema);

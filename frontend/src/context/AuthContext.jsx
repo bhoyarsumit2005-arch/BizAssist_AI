@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import api from "../services/api";
 
 const AuthContext = createContext(null);
+const REFRESH_KEY = "bizassist:refresh";
 
 const readStored = (key) => {
   try {
@@ -20,6 +21,7 @@ export function AuthProvider({ children }) {
 
   const clearSession = useCallback(() => {
     localStorage.removeItem("token");
+    localStorage.removeItem(REFRESH_KEY);
     localStorage.removeItem("bizassist:user");
     localStorage.removeItem("bizassist:business");
     setUser(null);
@@ -28,6 +30,7 @@ export function AuthProvider({ children }) {
 
   const persistSession = useCallback((payload) => {
     if (payload.token) localStorage.setItem("token", payload.token);
+    if (payload.refreshToken) localStorage.setItem(REFRESH_KEY, payload.refreshToken);
     if (payload.user) {
       localStorage.setItem("bizassist:user", JSON.stringify(payload.user));
       setUser(payload.user);
@@ -108,6 +111,13 @@ export function AuthProvider({ children }) {
   );
 
   const logout = useCallback(() => {
+    const refreshToken = localStorage.getItem(REFRESH_KEY);
+
+    if (refreshToken) {
+      // Best effort: the local session is cleared even if the API is down.
+      api.post("/auth/logout", { refreshToken }).catch(() => {});
+    }
+
     clearSession();
   }, [clearSession]);
 

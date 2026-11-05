@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  Archive,
   ArrowLeft,
   ArrowRight,
   ArrowUpDown,
   Download,
   Info,
+  Loader2,
   Mail,
   MapPin,
   MessageCircle,
+  Pencil,
   Phone,
   RefreshCw,
+  RotateCcw,
+  Save,
   Search,
   UserCheck,
   UserPlus,
@@ -19,9 +24,9 @@ import {
 
 import EmptyState from "../components/EmptyState";
 import Modal from "../components/Modal";
+import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-import api from "../services/api";
-import { demoCustomers, demoOrders } from "../services/demo";
+import api, { getErrorMessage } from "../services/api";
 import { getCustomerStats } from "../utils/metrics";
 import {
   downloadCsv,
@@ -36,17 +41,39 @@ import {
 
 const PAGE_SIZE = 9;
 
+const emptyForm = {
+  name: "",
+  phone: "",
+  email: "",
+  address: "",
+  notes: ""
+};
+
+const toForm = (customer) => ({
+  name: customer?.name || "",
+  phone: customer?.phone || "",
+  email: customer?.email || "",
+  address: customer?.address || "",
+  notes: customer?.notes || ""
+});
+
 export default function Customers() {
+  const { user } = useAuth();
   const { toast } = useToast();
+  const canArchive = user?.role === "owner";
   const [customers, setCustomers] = useState([]);
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [preview, setPreview] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [sort, setSort] = useState("newest");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState(null);
+  const [editor, setEditor] = useState({ open: false, customer: null });
+  const [form, setForm] = useState(emptyForm);
+  const [formError, setFormError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [changingActive, setChangingActive] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -56,20 +83,15 @@ export default function Customers() {
     );
     if (unauthorized) return;
 
-    const anySuccess = results.some((result) => result.status === "fulfilled");
-    if (!anySuccess) {
-      setCustomers(demoCustomers);
-      setOrders(demoOrders);
-      setPreview(true);
-      setLoading(false);
-      return;
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed) {
+      toast(getErrorMessage(failed.reason, "Could not load customers."), "error");
     }
 
     setCustomers(results[0].status === "fulfilled" ? results[0].value.data.customers || [] : []);
     setOrders(results[1].status === "fulfilled" ? results[1].value.data.orders || [] : []);
-    setPreview(false);
     setLoading(false);
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     load();
@@ -124,6 +146,92 @@ export default function Customers() {
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const visible = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  const openCreate = () => {
+    setForm(emptyForm);
+    setFormError("");
+    setEditor({ open: true, customer: null });
+  };
+
+  const openEdit = (customer) => {
+    setForm(toForm(customer));
+    setFormError("");
+    setEditor({ open: true, customer });
+  };
+
+  const closeEditor = () => {
+    if (saving) return;
+    setEditor({ open: false, customer: null });
+  };
+
+  const updateForm = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+
+  const saveCustomer = async (event) => {
+    event.preventDefault();
+
+    const payload = {
+      name: form.name.trim(),
+      phone: form.phone.trim(),
+      email: form.email.trim(),
+      address: form.address.trim(),
+      notes: form.notes.trim()
+    };
+
+    if (!payload.name) {
+      setFormError("Customer name is required.");
+      return;
+    }
+
+    setSaving(true);
+    setFormError("");
+
+    try {
+      if (editor.customer) {
+        const { data } = await api.put(`/customers/${editor.customer._id}`, payload);
+        setCustomers((current) =>
+          current.map((item) => (item._id === data.customer._id ? data.customer : item))
+        );
+        setSelected((current) => (current?._id === data.customer._id ? data.customer : current));
+        toast("Customer updated.");
+      } else {
+        const { data } = await api.post("/customers", payload);
+        setCustomers((current) => [data.customer, ...current]);
+        toast("Customer added.");
+      }
+
+      setEditor({ open: false, customer: null });
+    } catch (error) {
+      setFormError(getErrorMessage(error, "Could not save this customer."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const setCustomerActive = async (customer) => {
+    const nextActive = customer.isActive === false;
+
+    if (!nextActive && !window.confirm(`Archive ${customer.name}? Their order history will be kept.`)) {
+      return;
+    }
+
+    setChangingActive(true);
+
+    try {
+      const { data } = nextActive
+        ? await api.put(`/customers/${customer._id}`, { isActive: true })
+        : await api.delete(`/customers/${customer._id}`);
+
+      setCustomers((current) =>
+        current.map((item) => (item._id === data.customer._id ? data.customer : item))
+      );
+      setSelected((current) => (current?._id === data.customer._id ? data.customer : current));
+      toast(nextActive ? "Customer restored." : "Customer archived.");
+    } catch (error) {
+      toast(getErrorMessage(error, "Could not update this customer."), "error");
+    } finally {
+      setChangingActive(false);
+    }
+  };
+
   const exportCustomers = () => {
     if (!filtered.length) {
       toast("There are no customers to export.", "info");
@@ -150,12 +258,14 @@ export default function Customers() {
         <div>
           <div className="page-head__eyebrow">
             <span>Relationships</span>
-            {preview ? <span className="chip chip--preview">Sample data</span> : null}
           </div>
           <h2>Customers</h2>
           <p>Everyone your business has talked to, with their history in one place.</p>
         </div>
         <div className="page-head__actions">
+          <button type="button" className="btn btn-primary" onClick={openCreate}>
+            <UserPlus size={16} /> Add customer
+          </button>
           <button type="button" className="btn btn-secondary" onClick={exportCustomers}>
             <Download size={16} /> Export
           </button>
@@ -164,13 +274,6 @@ export default function Customers() {
           </button>
         </div>
       </header>
-
-      {preview ? (
-        <div className="notice notice--preview">
-          <Info size={17} />
-          <p><strong>Design preview.</strong> The API is unreachable, so sample customers and orders are shown.</p>
-        </div>
-      ) : null}
 
       <section className="customer-stats" aria-label="Customer summary">
         <div className="customer-stat">
@@ -263,7 +366,9 @@ export default function Customers() {
                   Clear filters
                 </button>
               ) : (
-                <Link to="/conversations" className="btn btn-primary">Open inbox</Link>
+                <button type="button" className="btn btn-primary" onClick={openCreate}>
+                  <UserPlus size={16} /> Add customer
+                </button>
               )
             }
           />
@@ -275,7 +380,7 @@ export default function Customers() {
                   <th>Customer</th>
                   <th>Contact</th>
                   <th>Orders</th>
-                  <th>Total spent</th>
+                  <th>Paid spend</th>
                   <th>Last order</th>
                   <th>Joined</th>
                   <th>Status</th>
@@ -339,8 +444,8 @@ export default function Customers() {
       </section>
 
       <p className="page-footnote">
-        <Info size={14} /> Customers are created automatically from WhatsApp conversations. Editing customer records
-        arrives in a later step.
+        <Info size={14} /> Customers are created automatically from WhatsApp conversations. You can also add, edit,
+        or archive them here; archived records keep their order history.
       </p>
 
       <CustomerDetails
@@ -351,12 +456,27 @@ export default function Customers() {
         })}
         stats={selected ? orderStats.get(selected._id) : null}
         onClose={() => setSelected(null)}
+        onEdit={openEdit}
+        onToggleActive={setCustomerActive}
+        changingActive={changingActive}
+        canArchive={canArchive}
+      />
+
+      <CustomerEditor
+        open={editor.open}
+        customer={editor.customer}
+        form={form}
+        error={formError}
+        saving={saving}
+        onChange={updateForm}
+        onClose={closeEditor}
+        onSubmit={saveCustomer}
       />
     </div>
   );
 }
 
-function CustomerDetails({ customer, orders, stats, onClose }) {
+function CustomerDetails({ customer, orders, stats, onClose, onEdit, onToggleActive, changingActive, canArchive = true }) {
   if (!customer) return null;
 
   const phoneDigits = (customer.phone || "").replace(/\D/g, "");
@@ -370,6 +490,19 @@ function CustomerDetails({ customer, orders, stats, onClose }) {
       size="lg"
       footer={
         <>
+          <button type="button" className="btn btn-secondary" onClick={() => onEdit(customer)}>
+            <Pencil size={16} /> Edit
+          </button>
+          <button
+            type="button"
+            className={`btn btn-ghost ${customer.isActive === false ? "" : "btn-ghost--danger"}`}
+            onClick={() => onToggleActive(customer)}
+            disabled={changingActive}
+            hidden={customer.isActive !== false && !canArchive}
+          >
+            {customer.isActive === false ? <RotateCcw size={16} /> : <Archive size={16} />}
+            {customer.isActive === false ? "Restore" : "Archive"}
+          </button>
           {phoneDigits ? (
             <a
               className="btn btn-secondary"
@@ -402,7 +535,7 @@ function CustomerDetails({ customer, orders, stats, onClose }) {
 
         <div className="customer-detail__stats">
           <div><span>Orders</span><strong>{stats?.orders || 0}</strong></div>
-          <div><span>Total spent</span><strong>{formatCurrency(stats?.spent || 0)}</strong></div>
+          <div><span>Paid spend</span><strong>{formatCurrency(stats?.spent || 0)}</strong></div>
           <div><span>Last order</span><strong>{stats?.lastOrderAt ? timeAgo(stats.lastOrderAt) : "—"}</strong></div>
         </div>
 
@@ -444,6 +577,93 @@ function CustomerDetails({ customer, orders, stats, onClose }) {
           </div>
         ) : null}
       </div>
+    </Modal>
+  );
+}
+
+function CustomerEditor({ open, customer, form, error, saving, onChange, onClose, onSubmit }) {
+  if (!open) return null;
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={customer ? "Edit customer" : "Add customer"}
+      subtitle={customer ? customer.name : "Create a customer record manually."}
+      footer={
+        <>
+          <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button type="submit" form="customer-form" className="btn btn-primary" disabled={saving}>
+            {saving ? <Loader2 size={16} className="spin" /> : <Save size={16} />}
+            {saving ? "Saving…" : "Save customer"}
+          </button>
+        </>
+      }
+    >
+      <form id="customer-form" className="customer-form" onSubmit={onSubmit}>
+        {error ? (
+          <div className="notice notice--danger">
+            <Info size={17} />
+            <p>{error}</p>
+          </div>
+        ) : null}
+
+        <div className="form-grid">
+          <div className="field">
+            <label htmlFor="customerName">Name</label>
+            <input
+              id="customerName"
+              type="text"
+              value={form.name}
+              onChange={(event) => onChange("name", event.target.value)}
+              placeholder="Customer name"
+              required
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="customerPhone">Phone</label>
+            <input
+              id="customerPhone"
+              type="tel"
+              value={form.phone}
+              onChange={(event) => onChange("phone", event.target.value)}
+              placeholder="+91 98765 43210"
+            />
+          </div>
+          <div className="field field--full">
+            <label htmlFor="customerEmail">Email</label>
+            <input
+              id="customerEmail"
+              type="email"
+              value={form.email}
+              onChange={(event) => onChange("email", event.target.value)}
+              placeholder="customer@example.com"
+            />
+          </div>
+          <div className="field field--full">
+            <label htmlFor="customerAddress">Address</label>
+            <input
+              id="customerAddress"
+              type="text"
+              value={form.address}
+              onChange={(event) => onChange("address", event.target.value)}
+              placeholder="Delivery address"
+            />
+          </div>
+          <div className="field field--full">
+            <label htmlFor="customerNotes">Notes</label>
+            <textarea
+              id="customerNotes"
+              rows={3}
+              value={form.notes}
+              onChange={(event) => onChange("notes", event.target.value)}
+              placeholder="Preferences, delivery instructions, anything useful…"
+            />
+          </div>
+        </div>
+      </form>
     </Modal>
   );
 }

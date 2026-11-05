@@ -1,9 +1,48 @@
 import axios from "axios";
 
+const baseURL = "http://localhost:5000/api";
+const REFRESH_KEY = "bizassist:refresh";
+
 const api = axios.create({
-  baseURL: "http://localhost:5000/api",
-  timeout: 15000
+  baseURL,
+  // Local models can take a while to answer the first time they are loaded.
+  timeout: 90000
 });
+
+const AUTH_ENDPOINTS = [
+  "/auth/login",
+  "/auth/register",
+  "/auth/refresh",
+  "/auth/logout",
+  "/auth/forgot-password",
+  "/auth/reset-password"
+];
+
+const isAuthEndpoint = (url = "") => AUTH_ENDPOINTS.some((path) => url.includes(path));
+
+let refreshPromise = null;
+
+const refreshAccessToken = async () => {
+  const refreshToken = localStorage.getItem(REFRESH_KEY);
+
+  if (!refreshToken) throw new Error("No refresh token");
+
+  // Use the bare client so this request cannot loop through the interceptor.
+  const { data } = await axios.post(
+    `${baseURL}/auth/refresh`,
+    { refreshToken },
+    { timeout: 15000, headers: { "Content-Type": "application/json" } }
+  );
+
+  if (!data?.token || !data?.refreshToken) {
+    throw new Error("Refresh response was incomplete");
+  }
+
+  localStorage.setItem("token", data.token);
+  localStorage.setItem(REFRESH_KEY, data.refreshToken);
+
+  return data.token;
+};
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem("token");
@@ -15,20 +54,44 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// A 401 from any non-auth endpoint means the stored session is no longer
-// valid. AuthContext listens for this event and clears the session.
+/**
+ * On a 401, try the rotating refresh token once before giving up. If the
+ * refresh also fails the stored session is cleared through AuthContext.
+ */
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     const status = error?.response?.status;
-    const url = error?.config?.url || "";
-    const isAuthCall = url.includes("/auth/login") || url.includes("/auth/register");
+    const original = error?.config || {};
+    const url = original.url || "";
 
-    if (status === 401 && !isAuthCall) {
-      window.dispatchEvent(new Event("bizassist:unauthorized"));
+    if (status !== 401) return Promise.reject(error);
+
+    if (isAuthEndpoint(url) || original._retriedWithRefresh || original.skipAuthRefresh) {
+      if (!isAuthEndpoint(url)) {
+        window.dispatchEvent(new Event("bizassist:unauthorized"));
+      }
+      return Promise.reject(error);
     }
 
-    return Promise.reject(error);
+    original._retriedWithRefresh = true;
+
+    try {
+      if (!refreshPromise) {
+        refreshPromise = refreshAccessToken().finally(() => {
+          refreshPromise = null;
+        });
+      }
+
+      const token = await refreshPromise;
+      original.headers = original.headers || {};
+      original.headers.Authorization = `Bearer ${token}`;
+
+      return api(original);
+    } catch {
+      window.dispatchEvent(new Event("bizassist:unauthorized"));
+      return Promise.reject(error);
+    }
   }
 );
 

@@ -92,13 +92,9 @@ export default function Login() {
             <div className="field">
               <div className="field__label-row">
                 <label htmlFor="password">Password</label>
-                <button
-                  type="button"
-                  className="link-btn"
-                  onClick={() => toast("Password reset will be available soon. Contact support for help.", "info")}
-                >
+                <Link to="/forgot-password" className="link-btn">
                   Forgot password?
-                </button>
+                </Link>
               </div>
               <div className="input-affix">
                 <Lock size={17} />

@@ -11,7 +11,6 @@ import {
   CreditCard,
   Download,
   Eye,
-  Info,
   Loader2,
   PackageCheck,
   Phone,
@@ -26,10 +25,10 @@ import EmptyState from "../components/EmptyState";
 import Modal from "../components/Modal";
 import { useToast } from "../context/ToastContext";
 import api, { getErrorMessage } from "../services/api";
-import { demoOrders } from "../services/demo";
 import {
   averageOrderValue,
   getStatusBreakdown,
+  isPaid,
   sumRevenue
 } from "../utils/metrics";
 import {
@@ -38,6 +37,7 @@ import {
   formatDate,
   formatTime,
   getStatusMeta,
+  getStatusOptions,
   initials,
   orderStatuses,
   paymentStatuses,
@@ -49,33 +49,40 @@ import {
 const PAGE_SIZE = 8;
 const workflow = ["pending", "confirmed", "processing", "dispatched", "delivered"];
 
+const paymentMethods = [
+  { value: "cash", label: "Cash" },
+  { value: "upi", label: "UPI" },
+  { value: "card", label: "Card" },
+  { value: "bank_transfer", label: "Bank transfer" },
+  { value: "other", label: "Other" }
+];
+
 const tabs = [{ value: "all", label: "All orders" }, ...orderStatuses];
 
 export default function Orders() {
   const { toast } = useToast();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [preview, setPreview] = useState(false);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(1);
   const [updatingId, setUpdatingId] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [paying, setPaying] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get("/orders");
       setOrders(data.orders || []);
-      setPreview(false);
     } catch (error) {
       if (error?.response?.status === 401) return;
-      setOrders(demoOrders);
-      setPreview(true);
+      setOrders([]);
+      toast(getErrorMessage(error, "Could not load orders."), "error");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     load();
@@ -123,15 +130,14 @@ export default function Orders() {
   const rangeEnd = Math.min(page * PAGE_SIZE, filtered.length);
 
   const stats = useMemo(() => {
-    const valid = orders.filter((order) => order.status !== "cancelled");
     const delivered = orders.filter((order) => order.status === "delivered").length;
     const pending = orders.filter((order) => ["pending", "confirmed"].includes(order.status)).length;
     return {
       revenue: sumRevenue(orders),
       average: averageOrderValue(orders),
+      paidCount: orders.filter(isPaid).length,
       delivered,
       pending,
-      validCount: valid.length,
       breakdown: getStatusBreakdown(orders)
     };
   }, [orders]);
@@ -149,21 +155,34 @@ export default function Orders() {
     );
 
     try {
-      if (preview) {
-        toast("Status updated in preview mode.", "info");
-      } else {
-        const { data } = await api.put(`/orders/${order._id}/status`, { status: nextStatus });
-        if (data.order) {
-          setOrders((current) => current.map((item) => (item._id === order._id ? data.order : item)));
-          setSelected((current) => (current && current._id === order._id ? data.order : current));
-        }
-        toast(`Order #${shortId(order._id)} marked ${getStatusMeta(nextStatus).label.toLowerCase()}.`);
+      const { data } = await api.put(`/orders/${order._id}/status`, { status: nextStatus });
+      if (data.order) {
+        setOrders((current) => current.map((item) => (item._id === order._id ? data.order : item)));
+        setSelected((current) => (current && current._id === order._id ? data.order : current));
       }
+      toast(`Order #${shortId(order._id)} marked ${getStatusMeta(nextStatus).label.toLowerCase()}.`);
     } catch (error) {
       setOrders(previous);
       toast(getErrorMessage(error, "Could not update the order status."), "error");
     } finally {
       setUpdatingId(null);
+    }
+  };
+
+  const handleRecordPayment = async (order, method) => {
+    setPaying(true);
+
+    try {
+      const { data } = await api.post(`/orders/${order._id}/payment`, { method });
+      if (data.order) {
+        setOrders((current) => current.map((item) => (item._id === order._id ? data.order : item)));
+        setSelected(data.order);
+      }
+      toast(`Payment recorded for order #${shortId(order._id)}.`);
+    } catch (error) {
+      toast(getErrorMessage(error, "Could not record the payment."), "error");
+    } finally {
+      setPaying(false);
     }
   };
 
@@ -194,7 +213,6 @@ export default function Orders() {
         <div>
           <div className="page-head__eyebrow">
             <span>Fulfilment</span>
-            {preview ? <span className="chip chip--preview">Sample data</span> : null}
           </div>
           <h2>Orders</h2>
           <p>Track every order from first message to delivery.</p>
@@ -209,26 +227,16 @@ export default function Orders() {
         </div>
       </header>
 
-      {preview ? (
-        <div className="notice notice--preview">
-          <Info size={17} />
-          <p>
-            <strong>Design preview.</strong> Status changes are kept in this browser session; connect the API to
-            persist them.
-          </p>
-        </div>
-      ) : null}
-
       <section className="order-stats" aria-label="Order summary">
         <div className="order-stat">
-          <span>Total revenue</span>
+          <span>Paid revenue</span>
           <strong>{formatCurrency(stats.revenue)}</strong>
-          <em>Across {stats.validCount} non-cancelled orders</em>
+          <em>From {stats.paidCount} paid order{stats.paidCount === 1 ? "" : "s"}</em>
         </div>
         <div className="order-stat">
-          <span>Average order</span>
+          <span>Average paid order</span>
           <strong>{formatCurrency(stats.average)}</strong>
-          <em>Per non-cancelled order</em>
+          <em>Paid orders only</em>
         </div>
         <div className="order-stat">
           <span>Needs action</span>
@@ -328,6 +336,7 @@ export default function Orders() {
                 {visible.map((order) => {
                   const customer = order.customerId;
                   const meta = getStatusMeta(order.status);
+                  const statusOptions = getStatusOptions(order.status);
                   const payment = paymentStatuses[order.paymentStatus] || { label: order.paymentStatus, tone: "neutral" };
                   const itemCount = (order.items || []).reduce((total, item) => total + (Number(item.quantity) || 0), 0);
 
@@ -366,10 +375,10 @@ export default function Orders() {
                           <select
                             value={order.status}
                             onChange={(event) => handleStatusChange(order, event.target.value)}
-                            disabled={updatingId === order._id}
+                            disabled={updatingId === order._id || statusOptions.length <= 1}
                             aria-label={`Status for order ${shortId(order._id)}`}
                           >
-                            {orderStatuses.map((option) => (
+                            {statusOptions.map((option) => (
                               <option key={option.value} value={option.value}>
                                 {option.label}
                               </option>
@@ -436,16 +445,21 @@ export default function Orders() {
         order={selected}
         onClose={() => setSelected(null)}
         onStatusChange={handleStatusChange}
+        onRecordPayment={handleRecordPayment}
         updating={updatingId === selected?._id}
+        paying={paying}
       />
     </div>
   );
 }
 
-function OrderDetails({ order, onClose, onStatusChange, updating }) {
+function OrderDetails({ order, onClose, onStatusChange, onRecordPayment, updating, paying }) {
+  const [method, setMethod] = useState("cash");
+
   if (!order) return null;
 
   const meta = getStatusMeta(order.status);
+  const statusOptions = getStatusOptions(order.status);
   const payment = paymentStatuses[order.paymentStatus] || { label: order.paymentStatus, tone: "neutral" };
   const currentIndex = workflow.indexOf(order.status);
   const itemTotal = (order.items || []).reduce(
@@ -538,9 +552,9 @@ function OrderDetails({ order, onClose, onStatusChange, updating }) {
                 <select
                   value={order.status}
                   onChange={(event) => onStatusChange(order, event.target.value)}
-                  disabled={updating}
+                  disabled={updating || statusOptions.length <= 1}
                 >
-                  {orderStatuses.map((option) => (
+                  {statusOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
@@ -553,18 +567,34 @@ function OrderDetails({ order, onClose, onStatusChange, updating }) {
                 <CreditCard size={16} />
                 <span>{payment.label}</span>
               </div>
-            </div>
-
-            <div className="order-side__block">
-              <span className="order-side__label">Source</span>
-              <div className="order-side__row">
-                <ShoppingBag size={16} />
-                <span>WhatsApp conversation</span>
-              </div>
+              {order.status !== "cancelled" && order.paymentStatus !== "paid" ? (
+                <div className="payment-form">
+                  <div className="select-wrap select-wrap--compact">
+                    <select
+                      value={method}
+                      onChange={(event) => setMethod(event.target.value)}
+                      aria-label="Payment method"
+                    >
+                      {paymentMethods.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => onRecordPayment(order, method)}
+                    disabled={paying}
+                  >
+                    {paying ? <Loader2 size={14} className="spin" /> : <CreditCard size={14} />}
+                    {paying ? "Recording…" : "Record full payment"}
+                  </button>
+                </div>
+              ) : null}
             </div>
 
             <Link to="/conversations" className="order-side__link">
-              Open conversation <ChevronRight size={14} />
+              Open inbox <ChevronRight size={14} />
             </Link>
           </aside>
         </div>

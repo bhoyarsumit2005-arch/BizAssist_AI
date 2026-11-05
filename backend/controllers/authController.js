@@ -1,94 +1,38 @@
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import mongoose from "mongoose";
 
 import Business from "../models/Business.js";
 import User from "../models/User.js";
+import {
+  issueSession,
+  revokeAllUserSessions,
+  revokeRefreshToken,
+  rotateRefreshToken,
+  SessionError
+} from "../services/authTokens.js";
+import {
+  passwordResetUrl,
+  sendPasswordResetEmail
+} from "../services/emailService.js";
+import { isTransactionUnsupported } from "../utils/mongoTransactions.js";
+import {
+  isValidEmail,
+  LIMITS,
+  normalizeEmail,
+  readText
+} from "../utils/validation.js";
 
 const SALT_ROUNDS = 10;
-const TOKEN_EXPIRES_IN = "7d";
 
-const MIN_PASSWORD_LENGTH = 6;
+const MIN_PASSWORD_LENGTH = LIMITS.passwordMin;
 // bcrypt hashes at most 72 bytes; anything longer is silently truncated.
-const MAX_PASSWORD_LENGTH = 72;
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_PASSWORD_LENGTH = LIMITS.passwordMax;
+const RESET_TOKEN_BYTES = 32;
+const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 
-/**
- * Gather message text from an error and everything the driver nested inside
- * it (mongoose and the Node driver wrap server errors in `originalError` /
- * `errorResponse` rather than `cause`).
- */
-const collectErrorText = (error) => {
-  const texts = [];
-  const seen = new Set();
-  let current = error;
-
-  while (current && !seen.has(current)) {
-    seen.add(current);
-    texts.push(
-      current.message,
-      current.errmsg,
-      current.errorResponse?.message,
-      current.errorResponse?.errmsg
-    );
-    current = current.cause || current.originalError || current.errorResponse?.originalError;
-  }
-
-  return texts.filter(Boolean).join(" | ");
-};
-
-// Messages emitted when the deployment cannot run transactions or the
-// retryable/transactional writes they rely on.
-const NO_TRANSACTION_SUPPORT_PATTERNS = [
-  /transaction numbers are only allowed/i,
-  /does not support retryable writes/i,
-  /does not support (?:multi-document )?transactions/i,
-  /add retryWrites=false/i,
-  /transactions are not supported/i
-];
-
-/**
- * True when the connected server cannot run multi-document transactions
- * (e.g. a standalone mongod, or a free/shared tier with the feature off).
- * Those failures must fall back to explicit rollback logic instead of
- * being reported to the caller as a generic 500.
- */
-const isTransactionUnsupported = (error) => {
-  if (!error) return false;
-
-  const text = collectErrorText(error);
-  if (!text) return false;
-
-  if (NO_TRANSACTION_SUPPORT_PATTERNS.some((pattern) => pattern.test(text))) {
-    return true;
-  }
-
-  // code 20 = IllegalOperation, the server's response to a transaction or
-  // retryable write on a deployment that does not support them.
-  const code = error.code ?? error.originalError?.code ?? error.errorResponse?.code;
-  const illegalOperation = code === 20 || error.codeName === "IllegalOperation";
-
-  return illegalOperation && /transaction|retryable|retryWrites/i.test(text);
-};
-
-/** Sign a JWT whose payload is the only source of identity for later requests. */
-const signToken = (user) => {
-  if (!process.env.JWT_SECRET) {
-    const error = new Error("Server configuration error: JWT_SECRET is not set");
-    error.statusCode = 500;
-    throw error;
-  }
-
-  return jwt.sign(
-    {
-      id: user._id.toString(),
-      role: user.role,
-      businessId: user.businessId ? user.businessId.toString() : null
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: TOKEN_EXPIRES_IN }
-  );
-};
+const hashResetToken = (token) =>
+  crypto.createHash("sha256").update(token).digest("hex");
 
 const toPublicUser = (user) => ({
   id: user._id.toString(),
@@ -230,7 +174,7 @@ const createAccount = async (data) => {
 /**
  * POST /api/auth/register
  * Owner registration: validate -> hash password -> create User -> create
- * Business -> link the two -> issue JWT -> return the login response.
+ * Business -> link the two -> issue a session -> return the login response.
  * The business ID always comes from the document we just created, never
  * from the request body.
  */
@@ -238,36 +182,28 @@ export const register = async (req, res) => {
   try {
     const body = req.body || {};
 
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    const name = readText(body.name, "name", { max: LIMITS.userName, required: true });
+    const email = normalizeEmail(body.email);
     const password = typeof body.password === "string" ? body.password : "";
 
-    const businessName =
-      (typeof body.businessName === "string" ? body.businessName.trim() : "") ||
-      (typeof body.business?.name === "string" ? body.business.name.trim() : "");
+    const businessName = readText(
+      (typeof body.businessName === "string" && body.businessName) ||
+        (typeof body.business?.name === "string" ? body.business.name : ""),
+      "businessName",
+      { max: LIMITS.businessName, required: true }
+    );
 
-    const businessCategory =
-      (typeof body.businessCategory === "string" ? body.businessCategory.trim() : "") ||
-      (typeof body.business?.category === "string" ? body.business.category.trim() : "");
+    const businessCategory = readText(
+      (typeof body.businessCategory === "string" && body.businessCategory) ||
+        (typeof body.business?.category === "string" ? body.business.category : ""),
+      "businessCategory",
+      { max: LIMITS.businessCategory, required: true }
+    );
 
-    const phone = typeof body.phone === "string" ? body.phone.trim() : undefined;
-    const address = typeof body.address === "string" ? body.address.trim() : undefined;
+    const phone = readText(body.phone, "phone", { max: LIMITS.phone });
+    const address = readText(body.address, "address", { max: LIMITS.address });
 
-    const missing = [];
-    if (!name) missing.push("name");
-    if (!email) missing.push("email");
-    if (!password) missing.push("password");
-    if (!businessName) missing.push("businessName");
-    if (!businessCategory) missing.push("businessCategory");
-
-    if (missing.length) {
-      return res.status(400).json({
-        success: false,
-        message: `Missing required fields: ${missing.join(", ")}`
-      });
-    }
-
-    if (!EMAIL_PATTERN.test(email)) {
+    if (!isValidEmail(email)) {
       return res.status(400).json({
         success: false,
         message: "Enter a valid email address"
@@ -308,12 +244,12 @@ export const register = async (req, res) => {
       address
     });
 
-    const token = signToken(user);
+    const session = await issueSession(user, req);
 
     return res.status(201).json({
       success: true,
       message: "Registration successful",
-      token,
+      ...session,
       user: toPublicUser(user),
       business: toPublicBusiness(business)
     });
@@ -325,10 +261,11 @@ export const register = async (req, res) => {
       });
     }
 
-    if (error?.statusCode) {
-      return res.status(error.statusCode).json({
+    if (error?.status || error?.statusCode) {
+      const status = error.status || error.statusCode;
+      return res.status(status).json({
         success: false,
-        message: error.message
+        message: status >= 500 ? "Registration failed. Please try again." : error.message
       });
     }
 
@@ -342,12 +279,13 @@ export const register = async (req, res) => {
 
 /**
  * POST /api/auth/login
- * Verifies the password and issues the same JWT used by registration.
+ * Verifies the password, then issues a short-lived access token and a
+ * rotating refresh token.
  */
 export const login = async (req, res) => {
   try {
     const body = req.body || {};
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    const email = normalizeEmail(body.email);
     const password = typeof body.password === "string" ? body.password : "";
 
     if (!email || !password) {
@@ -360,13 +298,13 @@ export const login = async (req, res) => {
     // password is stored with select: false, so ask for it explicitly.
     const user = await User.findOne({ email }).select("+password");
 
-    // Same message for both cases so the endpoint cannot enumerate accounts.
+    // Same message for every failure so the endpoint cannot enumerate accounts.
     const invalidResponse = {
       success: false,
       message: "Invalid email or password"
     };
 
-    if (!user) {
+    if (!user || user.isActive === false) {
       return res.status(401).json(invalidResponse);
     }
 
@@ -379,20 +317,22 @@ export const login = async (req, res) => {
       ? await Business.findById(user.businessId).select("name category")
       : null;
 
-    const token = signToken(user);
+    const session = await issueSession(user, req);
+    await User.updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date() } });
 
     return res.status(200).json({
       success: true,
       message: "Login successful",
-      token,
+      ...session,
       user: toPublicUser(user),
       business: toPublicBusiness(business)
     });
   } catch (error) {
-    if (error?.statusCode) {
-      return res.status(error.statusCode).json({
+    if (error?.status || error?.statusCode) {
+      const status = error.status || error.statusCode;
+      return res.status(status).json({
         success: false,
-        message: error.message
+        message: status >= 500 ? "Login failed. Please try again." : error.message
       });
     }
 
@@ -400,6 +340,180 @@ export const login = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Login failed. Please try again."
+    });
+  }
+};
+
+/**
+ * POST /api/auth/refresh
+ * Rotates the refresh token and returns a fresh access token. Reusing an old
+ * refresh token revokes every session for the account.
+ */
+export const refresh = async (req, res) => {
+  try {
+    const result = await rotateRefreshToken(req.body?.refreshToken, req);
+
+    const business = result.user.businessId
+      ? await Business.findById(result.user.businessId).select("name category")
+      : null;
+
+    return res.status(200).json({
+      success: true,
+      token: result.token,
+      refreshToken: result.refreshToken,
+      tokenType: result.tokenType,
+      expiresIn: result.expiresIn,
+      user: toPublicUser(result.user),
+      business: toPublicBusiness(business)
+    });
+  } catch (error) {
+    if (error instanceof SessionError || error?.status === 401) {
+      return res.status(401).json({
+        success: false,
+        message: "Your session has expired. Please sign in again."
+      });
+    }
+
+    console.error("Refresh error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Could not refresh your session"
+    });
+  }
+};
+
+/** POST /api/auth/logout — revoke this device's refresh token. */
+export const logout = async (req, res) => {
+  try {
+    await revokeRefreshToken(req.body?.refreshToken);
+  } catch (error) {
+    // Logout is best-effort; the client clears its tokens regardless.
+    console.error("Logout error:", error);
+  }
+
+  return res.status(200).json({ success: true, message: "Signed out" });
+};
+
+/**
+ * POST /api/auth/forgot-password
+ * Always returns the same message so an attacker cannot discover which email
+ * addresses have accounts.
+ */
+export const forgotPassword = async (req, res) => {
+  const generic = {
+    success: true,
+    message: "If an account exists for that email, a password reset link has been sent."
+  };
+
+  try {
+    const email = normalizeEmail(req.body?.email);
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid email address"
+      });
+    }
+
+    const user = await User.findOne({ email, isActive: { $ne: false } });
+
+    if (user) {
+      const token = crypto.randomBytes(RESET_TOKEN_BYTES).toString("base64url");
+      const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
+
+      await User.updateOne(
+        { _id: user._id },
+        {
+          $set: {
+            passwordResetTokenHash: hashResetToken(token),
+            passwordResetExpiresAt: expiresAt
+          }
+        }
+      );
+
+      const resetUrl = passwordResetUrl(token);
+
+      sendPasswordResetEmail({ to: user.email, name: user.name, resetUrl }).catch((error) => {
+        console.error("Password reset email failed:", error.message);
+      });
+
+      // Local development and the test suite can complete the flow without
+      // an email provider. Never expose this in production.
+      if (process.env.NODE_ENV !== "production" && process.env.AUTH_RESET_DEBUG === "true") {
+        return res.status(200).json({ ...generic, resetToken: token });
+      }
+    }
+
+    return res.status(200).json(generic);
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    return res.status(200).json(generic);
+  }
+};
+
+/** POST /api/auth/reset-password — consume a one-time reset token. */
+export const resetPassword = async (req, res) => {
+  try {
+    const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+
+    if (!token || token.length < 20 || token.length > 200) {
+      return res.status(400).json({
+        success: false,
+        message: "This reset link is invalid or has expired"
+      });
+    }
+
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters`
+      });
+    }
+
+    if (password.length > MAX_PASSWORD_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        message: `Password must be at most ${MAX_PASSWORD_LENGTH} characters`
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+
+    // Claim the token atomically, bump the version so existing access tokens
+    // stop working, and store the new password in one write.
+    const user = await User.findOneAndUpdate(
+      {
+        passwordResetTokenHash: hashResetToken(token),
+        passwordResetExpiresAt: { $gt: new Date() },
+        isActive: { $ne: false }
+      },
+      {
+        $set: { password: passwordHash, passwordChangedAt: new Date() },
+        $unset: { passwordResetTokenHash: "", passwordResetExpiresAt: "" },
+        $inc: { tokenVersion: 1 }
+      },
+      { returnDocument: "after" }
+    );
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "This reset link is invalid or has expired"
+      });
+    }
+
+    await revokeAllUserSessions(user._id);
+
+    return res.status(200).json({
+      success: true,
+      message: "Password updated. Sign in with your new password."
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Could not reset your password. Please try again."
     });
   }
 };
@@ -413,7 +527,7 @@ export const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
 
-    if (!user) {
+    if (!user || user.isActive === false) {
       return res.status(401).json({
         success: false,
         message: "Account no longer exists"
@@ -445,5 +559,3 @@ export const getMe = async (req, res) => {
     });
   }
 };
-
-export { isTransactionUnsupported };

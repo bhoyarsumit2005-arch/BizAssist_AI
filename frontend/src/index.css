@@ -6419,3 +6419,170 @@ input[type="search"]::-webkit-search-cancel-button {
   }
 }
 
+
+/* --- Payment recording, real inbox, and WhatsApp setup --- */
+
+.payment-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.payment-form .select-wrap {
+  flex: 1;
+  min-width: 90px;
+}
+
+.payment-form .btn {
+  flex: none;
+}
+
+.chat-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 24px 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.message__failed {
+  color: #b91c1c;
+  font-size: 8.5px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.customer-form .notice {
+  margin-bottom: 14px;
+}
+
+.wa-setup {
+  width: 100%;
+  max-width: 290px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+}
+
+.wa-setup__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 9px;
+  border-radius: 9px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--brand-strong);
+}
+
+.wa-setup h4 {
+  margin-bottom: 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.wa-setup .copy-field {
+  width: 100%;
+}
+
+.wa-setup p {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.55;
+}
+
+.setup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.setup-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.setup-list code {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.setup-list span {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+/* --- Auth recovery and team management --- */
+
+.alert--success {
+  background: #ecfdf3;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+}
+
+.alert--info {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+}
+
+.auth-switch a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.permission-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.permission-grid > div {
+  padding: 12px 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.permission-grid svg {
+  color: var(--brand-strong);
+}
+
+.permission-grid strong {
+  display: block;
+  margin: 6px 0 3px;
+  font-size: 11.5px;
+}
+
+.permission-grid p {
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.data-table .btn-sm {
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .permission-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -82,8 +82,7 @@ export default function Navbar({ onMenuOpen }) {
         <span className="desk-date">{formatDate(new Date(), { weekday: "short" })}</span>
 
         <span className="live-pill">
-          <span className="live-dot" />
-          AI online
+          AI assistant
         </span>
 
         <div className="popover-wrap" ref={bellRef}>

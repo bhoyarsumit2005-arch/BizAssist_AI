@@ -5,7 +5,6 @@ import {
   ArrowDownUp,
   Boxes,
   Image as ImageIcon,
-  Info,
   LayoutGrid,
   List,
   Loader2,
@@ -21,9 +20,9 @@ import {
 import EmptyState from "../components/EmptyState";
 import Modal from "../components/Modal";
 import ProductCard from "../components/ProductCard";
+import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import api, { getErrorMessage } from "../services/api";
-import { demoProducts } from "../services/demo";
 import { formatCurrency, formatNumber, formatDate } from "../utils/format";
 
 const emptyForm = {
@@ -49,12 +48,13 @@ const toForm = (product) => ({
 });
 
 export default function Products() {
+  const { user } = useAuth();
   const { toast } = useToast();
+  const canManage = user?.role === "owner";
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [preview, setPreview] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [sort, setSort] = useState("newest");
@@ -72,15 +72,14 @@ export default function Products() {
     try {
       const { data } = await api.get("/products");
       setProducts(data.products || []);
-      setPreview(false);
     } catch (error) {
       if (error?.response?.status === 401) return;
-      setProducts(demoProducts);
-      setPreview(true);
+      setProducts([]);
+      toast(getErrorMessage(error, "Could not load products."), "error");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     load();
@@ -145,23 +144,7 @@ export default function Products() {
 
     setSaving(true);
     try {
-      if (preview) {
-        if (editor.product) {
-          setProducts((current) =>
-            current.map((item) => (item._id === editor.product._id ? { ...item, ...payload } : item))
-          );
-        } else {
-          setProducts((current) => [
-            {
-              ...payload,
-              _id: `preview-${Date.now()}`,
-              createdAt: new Date().toISOString()
-            },
-            ...current
-          ]);
-        }
-        toast(editor.product ? "Product updated in preview mode." : "Product added in preview mode.", "info");
-      } else if (editor.product) {
+      if (editor.product) {
         const { data } = await api.put(`/products/${editor.product._id}`, payload);
         setProducts((current) =>
           current.map((item) => (item._id === editor.product._id ? data.product : item))
@@ -185,14 +168,9 @@ export default function Products() {
     setDeleting(true);
 
     try {
-      if (preview) {
-        setProducts((current) => current.filter((item) => item._id !== deleteTarget._id));
-        toast("Product removed in preview mode.", "info");
-      } else {
-        await api.delete(`/products/${deleteTarget._id}`);
-        setProducts((current) => current.filter((item) => item._id !== deleteTarget._id));
-        toast("Product deleted.");
-      }
+      await api.delete(`/products/${deleteTarget._id}`);
+      setProducts((current) => current.filter((item) => item._id !== deleteTarget._id));
+      toast("Product deleted.");
       setDeleteTarget(null);
     } catch (error) {
       toast(getErrorMessage(error, "Could not delete the product."), "error");
@@ -210,12 +188,8 @@ export default function Products() {
     );
 
     try {
-      if (!preview) {
-        await api.put(`/products/${product._id}`, { isActive });
-        toast(isActive ? "Product is now active." : "Product paused.");
-      } else {
-        toast(isActive ? "Product activated in preview mode." : "Product paused in preview mode.", "info");
-      }
+      await api.put(`/products/${product._id}`, { isActive });
+      toast(isActive ? "Product is now active." : "Product paused.");
     } catch (error) {
       setProducts(previous);
       toast(getErrorMessage(error, "Could not update the product."), "error");
@@ -265,7 +239,6 @@ export default function Products() {
         <div>
           <div className="page-head__eyebrow">
             <span>Catalogue</span>
-            {preview ? <span className="chip chip--preview">Sample data</span> : null}
           </div>
           <h2>Products</h2>
           <p>Everything your assistant can sell, recommend, and answer questions about.</p>
@@ -274,20 +247,13 @@ export default function Products() {
           <button type="button" className="btn btn-secondary" onClick={load} disabled={loading}>
             <RefreshCw size={16} className={loading ? "spin" : ""} /> Refresh
           </button>
-          <button type="button" className="btn btn-primary" onClick={openCreate}>
-            <Plus size={17} /> Add product
-          </button>
+          {canManage ? (
+            <button type="button" className="btn btn-primary" onClick={openCreate}>
+              <Plus size={17} /> Add product
+            </button>
+          ) : null}
         </div>
       </header>
-
-      {preview ? (
-        <div className="notice notice--preview">
-          <Info size={17} />
-          <p>
-            <strong>Design preview.</strong> The API is unreachable, so changes are kept in this browser session only.
-          </p>
-        </div>
-      ) : null}
 
       {stats.low ? (
         <div className="notice notice--warning">
@@ -423,11 +389,11 @@ export default function Products() {
                 >
                   Clear filters
                 </button>
-              ) : (
+              ) : canManage ? (
                 <button type="button" className="btn btn-primary" onClick={openCreate}>
                   <Plus size={16} /> Add product
                 </button>
-              )
+              ) : null
             }
           />
         ) : view === "grid" ? (
@@ -436,6 +402,7 @@ export default function Products() {
               <ProductCard
                 key={product._id}
                 product={product}
+                canManage={canManage}
                 onEdit={openEdit}
                 onDelete={setDeleteTarget}
                 onToggleActive={handleToggleActive}
@@ -485,19 +452,23 @@ export default function Products() {
                       </td>
                       <td className="muted">{formatDate(product.createdAt)}</td>
                       <td>
-                        <div className="table-actions">
-                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => openEdit(product)}>
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="icon-btn icon-btn--danger"
-                            onClick={() => setDeleteTarget(product)}
-                            aria-label={`Delete ${product.name}`}
-                          >
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
+                        {canManage ? (
+                          <div className="table-actions">
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => openEdit(product)}>
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-btn icon-btn--danger"
+                              onClick={() => setDeleteTarget(product)}
+                              aria-label={`Delete ${product.name}`}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="muted">Read-only</span>
+                        )}
                       </td>
                     </tr>
                   );

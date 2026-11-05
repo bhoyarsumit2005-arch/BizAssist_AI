@@ -8,6 +8,7 @@ import {
   MessagesSquare,
   Package,
   ShoppingCart,
+  ShieldCheck,
   Sparkles,
   Users,
   X
@@ -21,13 +22,14 @@ const mainNav = [
   { to: "/products", label: "Products", icon: Package },
   { to: "/orders", label: "Orders", icon: ShoppingCart },
   { to: "/customers", label: "Customers", icon: Users },
-  { to: "/conversations", label: "Conversations", icon: MessagesSquare, badge: "3" },
+  { to: "/conversations", label: "Conversations", icon: MessagesSquare },
   { to: "/analytics", label: "Analytics", icon: BarChart3 }
 ];
 
 const settingsNav = [
   { to: "/settings/ai", label: "AI Settings", icon: Brain },
-  { to: "/settings/whatsapp", label: "WhatsApp Settings", icon: MessageCircle }
+  { to: "/settings/whatsapp", label: "WhatsApp Settings", icon: MessageCircle },
+  { to: "/settings/team", label: "Team", icon: ShieldCheck }
 ];
 
 export default function Sidebar({ open, onClose }) {
@@ -60,7 +62,7 @@ export default function Sidebar({ open, onClose }) {
 
         <nav className="sidebar__nav" aria-label="Main navigation">
           <p className="nav-label">Workspace</p>
-          {mainNav.map(({ to, label, icon: Icon, badge }) => (
+          {mainNav.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -69,22 +71,25 @@ export default function Sidebar({ open, onClose }) {
             >
               <Icon size={18} />
               <span>{label}</span>
-              {badge ? <em className="nav-badge">{badge}</em> : null}
             </NavLink>
           ))}
 
-          <p className="nav-label nav-label--spaced">Configuration</p>
-          {settingsNav.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              className={({ isActive }) => `nav-link ${isActive ? "is-active" : ""}`}
-              onClick={onClose}
-            >
-              <Icon size={18} />
-              <span>{label}</span>
-            </NavLink>
-          ))}
+          {user?.role === "owner" ? (
+            <>
+              <p className="nav-label nav-label--spaced">Configuration</p>
+              {settingsNav.map(({ to, label, icon: Icon }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  className={({ isActive }) => `nav-link ${isActive ? "is-active" : ""}`}
+                  onClick={onClose}
+                >
+                  <Icon size={18} />
+                  <span>{label}</span>
+                </NavLink>
+              ))}
+            </>
+          ) : null}
         </nav>
 
         <div className="sidebar__spacer" />
@@ -94,8 +99,8 @@ export default function Sidebar({ open, onClose }) {
             <Sparkles size={16} />
           </span>
           <div>
-            <strong>AI assistant is live</strong>
-            <p>Replying to customers automatically</p>
+            <strong>AI assistant</strong>
+            <p>Uses your saved business settings</p>
           </div>
         </div>
 
@@ -103,7 +108,7 @@ export default function Sidebar({ open, onClose }) {
           <span className="avatar avatar--sm">{initials(user?.name || "Owner")}</span>
           <div>
             <strong>{user?.name || "Owner"}</strong>
-            <span>{user?.email || "owner@store.com"}</span>
+            <span>{user?.role === "staff" ? "Staff" : "Owner"} · {user?.email || ""}</span>
           </div>
           <button type="button" className="icon-btn icon-btn--dark" onClick={logout} aria-label="Log out">
             <LogOut size={16} />

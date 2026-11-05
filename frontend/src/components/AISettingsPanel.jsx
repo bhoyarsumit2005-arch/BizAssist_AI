@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   Bot,
   Check,
   Clock,
   Languages,
+  Loader2,
   MessageSquareText,
   RotateCcw,
   Save,
@@ -17,10 +19,9 @@ import {
 } from "lucide-react";
 
 import { useToast } from "../context/ToastContext";
-import { defaultAiSettings } from "../services/demo";
+import api, { getErrorMessage } from "../services/api";
+import { defaultAiSettings } from "../utils/settingsDefaults";
 import { formatTime } from "../utils/format";
-
-const STORAGE_KEY = "bizassist:ai-settings";
 
 const tones = [
   { value: "friendly", label: "Friendly", description: "Warm and conversational", icon: Smile },
@@ -42,67 +43,107 @@ const languages = [
   "Malayalam"
 ];
 
-const loadSettings = () => {
-  try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-    return { ...defaultAiSettings, ...(stored || {}) };
-  } catch {
-    return { ...defaultAiSettings };
-  }
-};
-
-const testReply = (text) => {
-  const message = text.toLowerCase();
-  if (/price|cost|how much|rate/.test(message)) return "Our scented candle is ₹649 and the tote is ₹499. Both are in stock — would you like me to reserve them for you?";
-  if (/deliver|shipping|ship|time/.test(message)) return "We deliver across India in 2–3 working days. Orders above ₹999 ship free. Where should I send your order?";
-  if (/refund|return|damaged/.test(message)) return "I'm sorry to hear that. I've handed this conversation to the owner, who will arrange a replacement or refund for you right away.";
-  if (/order/.test(message)) return "I'd be happy to help with your order! Could you share your order number so I can check the latest status?";
-  return "Thanks for asking! I've noted your question and our team will follow up with the details shortly. Is there anything else I can help with?";
-};
+const initialMessages = (greeting) => [
+  { id: "greeting", role: "ai", text: greeting, time: new Date().toISOString() }
+];
 
 export default function AISettingsPanel() {
   const { toast } = useToast();
-  const [settings, setSettings] = useState(loadSettings);
+  const [settings, setSettings] = useState({ ...defaultAiSettings });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [savedAt, setSavedAt] = useState(null);
+  const [health, setHealth] = useState({ state: "checking", model: "" });
   const [testInput, setTestInput] = useState("");
-  const [testMessages, setTestMessages] = useState(() => [
-    { id: "greeting", role: "ai", text: loadSettings().greeting, time: new Date().toISOString() }
-  ]);
+  const [testMessages, setTestMessages] = useState(() => initialMessages(defaultAiSettings.greeting));
   const [testTyping, setTestTyping] = useState(false);
-  const timers = useRef([]);
   const testScrollRef = useRef(null);
 
-  useEffect(
-    () => () => {
-      timers.current.forEach((timer) => clearTimeout(timer));
-    },
-    []
-  );
+  useEffect(() => {
+    let active = true;
+
+    const load = async () => {
+      try {
+        const { data } = await api.get("/settings");
+        if (!active) return;
+        setSettings({ ...defaultAiSettings, ...(data.ai || {}) });
+        setLoadError("");
+      } catch (error) {
+        if (active) {
+          setLoadError(getErrorMessage(error, "Could not load your AI settings."));
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    load();
+
+    api
+      .get("/ai/health")
+      .then(({ data }) => {
+        if (active) setHealth({ state: "ready", model: data.model || "" });
+      })
+      .catch(() => {
+        if (active) setHealth({ state: "unavailable", model: "" });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     const node = testScrollRef.current;
     if (node) node.scrollTop = node.scrollHeight;
   }, [testMessages.length, testTyping]);
 
+  useEffect(() => {
+    setTestMessages((current) =>
+      current.length ? current : initialMessages(settings.greeting)
+    );
+  }, [settings.greeting]);
+
   const update = (field, value) => setSettings((current) => ({ ...current, [field]: value }));
 
-  const handleSave = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  const persist = async (nextSettings) => {
+    const { data } = await api.put("/settings/ai", nextSettings);
+    setSettings({ ...defaultAiSettings, ...(data.ai || {}) });
     setSavedAt(new Date());
-    toast("AI instructions saved. New conversations will use them.");
   };
 
-  const handleReset = () => {
+  const handleSave = async () => {
+    setSaving(true);
+
+    try {
+      await persist(settings);
+      toast("AI settings saved. New conversations will use them.");
+    } catch (error) {
+      toast(getErrorMessage(error, "Could not save your AI settings."), "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReset = async () => {
+    setSaving(true);
     setSettings({ ...defaultAiSettings });
-    localStorage.removeItem(STORAGE_KEY);
-    setSavedAt(null);
-    toast("AI settings reset to the recommended defaults.", "info");
+
+    try {
+      await persist(defaultAiSettings);
+      toast("AI settings reset to the recommended defaults.", "info");
+    } catch (error) {
+      toast(getErrorMessage(error, "Could not reset your AI settings."), "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const sendTest = (event) => {
+  const sendTest = async (event) => {
     event.preventDefault();
     const text = testInput.trim();
-    if (!text) return;
+    if (!text || testTyping) return;
 
     setTestMessages((current) => [
       ...current,
@@ -111,21 +152,47 @@ export default function AISettingsPanel() {
     setTestInput("");
     setTestTyping(true);
 
-    const timer = setTimeout(() => {
+    try {
+      // Send the current (possibly unsaved) settings so this preview matches
+      // what the owner sees on screen.
+      const { data } = await api.post("/ai/chat", { message: text, settings });
       setTestMessages((current) => [
         ...current,
-        { id: `ai-${Date.now()}`, role: "ai", text: testReply(text), time: new Date().toISOString() }
+        { id: `ai-${Date.now()}`, role: "ai", text: data.reply, time: new Date().toISOString() }
       ]);
+    } catch (error) {
+      setTestMessages((current) => [
+        ...current,
+        {
+          id: `error-${Date.now()}`,
+          role: "ai",
+          text: getErrorMessage(error, "The assistant is unavailable right now. Please try again shortly."),
+          time: new Date().toISOString()
+        }
+      ]);
+    } finally {
       setTestTyping(false);
-    }, 1100);
-    timers.current.push(timer);
+    }
   };
 
   const activeTone = tones.find((tone) => tone.value === settings.tone) || tones[0];
+  const statusChip =
+    health.state === "ready"
+      ? { className: "chip--success", label: "Model ready" }
+      : health.state === "unavailable"
+        ? { className: "chip--danger", label: "Model unavailable" }
+        : { className: "chip--neutral", label: "Checking model…" };
 
   return (
     <div className="settings-grid">
       <div className="settings-main">
+        {loadError ? (
+          <div className="notice notice--danger">
+            <AlertTriangle size={17} />
+            <p>{loadError}</p>
+          </div>
+        ) : null}
+
         <section className="card settings-card">
           <div className="settings-card__head">
             <span className="settings-card__icon"><Wand2 size={18} /></span>
@@ -147,6 +214,7 @@ export default function AISettingsPanel() {
               value={settings.instructions}
               onChange={(event) => update("instructions", event.target.value)}
               placeholder="You are the friendly assistant for…"
+              disabled={loading || saving}
             />
             <p className="field-hint">
               Include your delivery policy, return window, payment methods, and anything the assistant should never
@@ -165,6 +233,7 @@ export default function AISettingsPanel() {
                 key={suggestion}
                 type="button"
                 onClick={() => update("instructions", `${settings.instructions.trim()}\n• ${suggestion}`.slice(0, 2000))}
+                disabled={loading || saving}
               >
                 + {suggestion}
               </button>
@@ -190,6 +259,7 @@ export default function AISettingsPanel() {
                 aria-checked={settings.tone === value}
                 className={`tone-card ${settings.tone === value ? "is-active" : ""}`}
                 onClick={() => update("tone", value)}
+                disabled={loading || saving}
               >
                 <span><Icon size={17} /></span>
                 <strong>{label}</strong>
@@ -203,7 +273,12 @@ export default function AISettingsPanel() {
             <div className="field">
               <label htmlFor="aiLanguage"><Languages size={14} /> Primary language</label>
               <div className="select-wrap">
-                <select id="aiLanguage" value={settings.language} onChange={(event) => update("language", event.target.value)}>
+                <select
+                  id="aiLanguage"
+                  value={settings.language}
+                  onChange={(event) => update("language", event.target.value)}
+                  disabled={loading || saving}
+                >
                   {languages.map((language) => (
                     <option key={language} value={language}>{language}</option>
                   ))}
@@ -232,11 +307,25 @@ export default function AISettingsPanel() {
           <div className="form-grid form-grid--spaced">
             <div className="field">
               <label htmlFor="aiGreeting">Greeting message</label>
-              <textarea id="aiGreeting" rows={2} value={settings.greeting} onChange={(event) => update("greeting", event.target.value)} />
+              <textarea
+                id="aiGreeting"
+                rows={2}
+                maxLength={500}
+                value={settings.greeting}
+                onChange={(event) => update("greeting", event.target.value)}
+                disabled={loading || saving}
+              />
             </div>
             <div className="field">
               <label htmlFor="aiFallback">Fallback message</label>
-              <textarea id="aiFallback" rows={2} value={settings.fallback} onChange={(event) => update("fallback", event.target.value)} />
+              <textarea
+                id="aiFallback"
+                rows={2}
+                maxLength={500}
+                value={settings.fallback}
+                onChange={(event) => update("fallback", event.target.value)}
+                disabled={loading || saving}
+              />
               <p className="field-hint">Used when the assistant is unsure or a question needs a human.</p>
             </div>
           </div>
@@ -257,6 +346,7 @@ export default function AISettingsPanel() {
               title="Automatic replies"
               description="Let the assistant answer new WhatsApp messages instantly."
               checked={settings.autoReply}
+              disabled={loading || saving}
               onChange={(value) => update("autoReply", value)}
             />
             <ToggleRow
@@ -264,13 +354,15 @@ export default function AISettingsPanel() {
               title="After-hours replies"
               description="Keep replying outside working hours with a slightly slower, more careful tone."
               checked={settings.afterHours}
+              disabled={loading || saving}
               onChange={(value) => update("afterHours", value)}
             />
             <ToggleRow
               icon={Sparkle}
               title="Take orders in chat"
-              description="Collect items, quantities, and delivery details, then create a pending order."
+              description="Collect items, quantities, and delivery details, then prepare the order with you."
               checked={settings.takeOrders}
+              disabled={loading || saving}
               onChange={(value) => update("takeOrders", value)}
             />
             <ToggleRow
@@ -278,6 +370,7 @@ export default function AISettingsPanel() {
               title="Hand off to a human"
               description="Escalate refunds, complaints, and unclear requests to you right away."
               checked={settings.handoff}
+              disabled={loading || saving}
               onChange={(value) => update("handoff", value)}
             />
           </div>
@@ -285,11 +378,23 @@ export default function AISettingsPanel() {
           <div className="hours-row">
             <div className="field">
               <label htmlFor="hoursStart">Working hours start</label>
-              <input id="hoursStart" type="time" value={settings.hoursStart || "10:00"} onChange={(event) => update("hoursStart", event.target.value)} />
+              <input
+                id="hoursStart"
+                type="time"
+                value={settings.hoursStart || "10:00"}
+                onChange={(event) => update("hoursStart", event.target.value)}
+                disabled={loading || saving}
+              />
             </div>
             <div className="field">
               <label htmlFor="hoursEnd">Working hours end</label>
-              <input id="hoursEnd" type="time" value={settings.hoursEnd || "19:00"} onChange={(event) => update("hoursEnd", event.target.value)} />
+              <input
+                id="hoursEnd"
+                type="time"
+                value={settings.hoursEnd || "19:00"}
+                onChange={(event) => update("hoursEnd", event.target.value)}
+                disabled={loading || saving}
+              />
             </div>
             <p className="hours-row__hint">Used for after-hours behaviour and response expectations.</p>
           </div>
@@ -298,14 +403,19 @@ export default function AISettingsPanel() {
         <div className="settings-actions">
           <div>
             <strong>Ready to save?</strong>
-            <p>{savedAt ? `Last saved at ${formatTime(savedAt)}` : "Changes are stored in this browser for now."}</p>
+            <p>
+              {savedAt
+                ? `Saved to your business at ${formatTime(savedAt)}.`
+                : "Changes are saved to your business, not this browser."}
+            </p>
           </div>
           <div>
-            <button type="button" className="btn btn-secondary" onClick={handleReset}>
+            <button type="button" className="btn btn-secondary" onClick={handleReset} disabled={loading || saving}>
               <RotateCcw size={15} /> Reset
             </button>
-            <button type="button" className="btn btn-primary" onClick={handleSave}>
-              <Save size={16} /> Save changes
+            <button type="button" className="btn btn-primary" onClick={handleSave} disabled={loading || saving}>
+              {saving ? <Loader2 size={16} className="spin" /> : <Save size={16} />}
+              {saving ? "Saving…" : "Save changes"}
             </button>
           </div>
         </div>
@@ -315,12 +425,12 @@ export default function AISettingsPanel() {
         <section className="card assistant-status">
           <div className="assistant-status__head">
             <span className="assistant-orb assistant-orb--lg"><Sparkles size={20} /></span>
-            <span className="chip chip--success"><span className="live-dot" /> Active</span>
+            <span className={`chip ${statusChip.className}`}>{statusChip.label}</span>
           </div>
-          <h3>Your assistant is live</h3>
-          <p>It will use these instructions for every new conversation.</p>
+          <h3>Assistant settings</h3>
+          <p>Saved per business and applied to every new conversation.</p>
           <dl className="assistant-status__list">
-            <div><dt>Model</dt><dd>qwen3.5:2b</dd></div>
+            <div><dt>Model</dt><dd>{health.model || "Not reported"}</dd></div>
             <div><dt>Tone</dt><dd>{activeTone.label}</dd></div>
             <div><dt>Language</dt><dd>{settings.language}</dd></div>
             <div><dt>Auto-reply</dt><dd>{settings.autoReply ? "On" : "Off"}</dd></div>
@@ -331,9 +441,9 @@ export default function AISettingsPanel() {
           <div className="card__head">
             <div>
               <h3>Test your assistant</h3>
-              <p>Try a customer question before going live.</p>
+              <p>Try a real customer question using the settings above.</p>
             </div>
-            <span className="chip chip--soft"><Sparkles size={12} /> Sandbox</span>
+            <span className="chip chip--soft"><Sparkles size={12} /> Live model</span>
           </div>
 
           <div className="test-chat" ref={testScrollRef}>
@@ -360,16 +470,22 @@ export default function AISettingsPanel() {
               placeholder="e.g. Do you deliver to Mumbai?"
               value={testInput}
               onChange={(event) => setTestInput(event.target.value)}
+              disabled={testTyping}
             />
-            <button type="submit" className="btn btn-primary btn-icon" disabled={!testInput.trim()} aria-label="Send test message">
-              <Send size={16} />
+            <button
+              type="submit"
+              className="btn btn-primary btn-icon"
+              disabled={!testInput.trim() || testTyping}
+              aria-label="Send test message"
+            >
+              {testTyping ? <Loader2 size={16} className="spin" /> : <Send size={16} />}
             </button>
           </form>
           <button
             type="button"
             className="link-btn test-reset"
             onClick={() => {
-              setTestMessages([{ id: "greeting", role: "ai", text: settings.greeting, time: new Date().toISOString() }]);
+              setTestMessages(initialMessages(settings.greeting));
               setTestTyping(false);
             }}
           >
@@ -391,7 +507,7 @@ export default function AISettingsPanel() {
   );
 }
 
-function ToggleRow({ icon: Icon, title, description, checked, onChange }) {
+function ToggleRow({ icon: Icon, title, description, checked, disabled, onChange }) {
   return (
     <div className="toggle-row">
       <span className="toggle-row__icon"><Icon size={17} /></span>
@@ -400,7 +516,12 @@ function ToggleRow({ icon: Icon, title, description, checked, onChange }) {
         <p>{description}</p>
       </div>
       <label className="switch">
-        <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.checked)}
+        />
         <span className="switch__track" />
       </label>
     </div>
