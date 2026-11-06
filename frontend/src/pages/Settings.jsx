@@ -1,18 +1,13 @@
 import { NavLink, useLocation } from "react-router-dom";
-import { Brain, Check, MessageCircle, ShieldCheck, Sparkles, Users } from "lucide-react";
+import { Brain, Check, ShieldCheck, Sparkles, Users } from "lucide-react";
 
 import AISettingsPanel from "../components/AISettingsPanel";
 import StaffSettingsPanel from "../components/StaffSettingsPanel";
-import WhatsAppSettingsPanel from "../components/WhatsAppSettingsPanel";
 
 const copy = {
   ai: {
     title: "AI Settings",
     description: "Teach your assistant how to speak, what to know, and when to hand over to you."
-  },
-  whatsapp: {
-    title: "WhatsApp Settings",
-    description: "Connect your WhatsApp Cloud API number and manage the webhook."
   },
   team: {
     title: "Team",
@@ -22,11 +17,7 @@ const copy = {
 
 export default function Settings() {
   const location = useLocation();
-  const section = location.pathname.endsWith("/whatsapp")
-    ? "whatsapp"
-    : location.pathname.endsWith("/team")
-      ? "team"
-      : "ai";
+  const section = location.pathname.endsWith("/team") ? "team" : "ai";
 
   return (
     <div className="page settings-page">
@@ -52,13 +43,6 @@ export default function Settings() {
             <em>Instructions, language, and automation</em>
           </span>
         </NavLink>
-        <NavLink to="/settings/whatsapp" className={({ isActive }) => `settings-tab ${isActive ? "is-active" : ""}`}>
-          <span className="settings-tab__icon settings-tab__icon--green"><MessageCircle size={17} /></span>
-          <span>
-            <strong>WhatsApp</strong>
-            <em>Connection and webhook</em>
-          </span>
-        </NavLink>
         <NavLink to="/settings/team" className={({ isActive }) => `settings-tab ${isActive ? "is-active" : ""}`}>
           <span className="settings-tab__icon settings-tab__icon--violet"><Users size={17} /></span>
           <span>
@@ -72,9 +56,7 @@ export default function Settings() {
         </span>
       </nav>
 
-      {section === "whatsapp" ? (
-        <WhatsAppSettingsPanel />
-      ) : section === "team" ? (
+      {section === "team" ? (
         <StaffSettingsPanel />
       ) : (
         <AISettingsPanel />

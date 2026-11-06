@@ -174,7 +174,7 @@ export default function Conversations() {
       setDraft("");
     } catch (error) {
       // Keep the draft so the owner can retry or copy it after a delivery
-      // failure (for example when WhatsApp is not configured yet).
+      // failure.
       toast(getErrorMessage(error, "Could not send this message."), "error");
     } finally {
       setSending(false);
@@ -234,7 +234,7 @@ export default function Conversations() {
             <span className="chip chip--soft">{openCount} open</span>
           </div>
           <h2>Conversations</h2>
-          <p>WhatsApp messages your customers send, stored against their customer record.</p>
+          <p>Customer messages, stored against their customer record.</p>
         </div>
         <div className="page-head__actions">
           <button
@@ -300,7 +300,7 @@ export default function Conversations() {
                     </span>
                     <span className="conversation__bottom">
                       <em>
-                        {conversation.channel === "whatsapp" ? <MessageCircle size={12} /> : <Globe size={12} />}
+                        <Globe size={12} />
                         {conversation.lastMessage || "No messages yet"}
                       </em>
                       {conversation.unreadCount ? <b>{conversation.unreadCount}</b> : null}
@@ -316,7 +316,7 @@ export default function Conversations() {
                 description={
                   conversations.length
                     ? "Try another search or filter."
-                    : "Messages appear here when customers contact your WhatsApp number."
+                    : "Messages appear here when customers get in touch."
                 }
               />
             )}
@@ -343,7 +343,7 @@ export default function Conversations() {
               <div className="chat-head__person">
                 <strong>{selected.customer?.name || "Guest"}</strong>
                 <span>
-                  {selected.customer?.phone || "No phone"} · {selected.channel || "whatsapp"}
+                  {selected.customer?.phone || "No phone"} · {selected.channel || "manual"}
                 </span>
               </div>
               <span className={`chip chip--${selected.status === "resolved" ? "success" : "info"}`}>

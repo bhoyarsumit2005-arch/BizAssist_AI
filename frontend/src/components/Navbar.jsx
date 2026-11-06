@@ -9,8 +9,6 @@ import {
   ChevronDown,
   LogOut,
   Menu,
-  MessageCircle,
-  Settings,
   ShoppingCart,
   Sparkles
 } from "lucide-react";
@@ -25,14 +23,12 @@ const titles = {
   "/customers": { eyebrow: "Workspace", title: "Customers" },
   "/conversations": { eyebrow: "Workspace", title: "Conversations" },
   "/analytics": { eyebrow: "Workspace", title: "Analytics" },
-  "/settings/ai": { eyebrow: "Configuration", title: "AI Settings" },
-  "/settings/whatsapp": { eyebrow: "Configuration", title: "WhatsApp Settings" }
+  "/settings/ai": { eyebrow: "Configuration", title: "AI Settings" }
 };
 
 const notifications = [
   { icon: ShoppingCart, title: "New order received", detail: "Order #1042 · ₹1,298", time: "4m ago", tone: "emerald" },
-  { icon: AlertTriangle, title: "Low stock alert", detail: "Masala Chai Blend · 5 left", time: "26m ago", tone: "amber" },
-  { icon: MessageCircle, title: "WhatsApp connected", detail: "Messages are syncing normally", time: "1h ago", tone: "blue" }
+  { icon: AlertTriangle, title: "Low stock alert", detail: "Masala Chai Blend · 5 left", time: "26m ago", tone: "amber" }
 ];
 
 export default function Navbar({ onMenuOpen }) {
@@ -159,9 +155,6 @@ export default function Navbar({ onMenuOpen }) {
               </div>
               <Link to="/settings/ai" className="popover__item">
                 <Brain size={16} /> AI settings
-              </Link>
-              <Link to="/settings/whatsapp" className="popover__item">
-                <Settings size={16} /> WhatsApp settings
               </Link>
               <button type="button" className="popover__item popover__item--danger" onClick={handleLogout}>
                 <LogOut size={16} /> Sign out

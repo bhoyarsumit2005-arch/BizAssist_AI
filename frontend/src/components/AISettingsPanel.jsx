@@ -344,7 +344,7 @@ export default function AISettingsPanel() {
             <ToggleRow
               icon={MessageSquareText}
               title="Automatic replies"
-              description="Let the assistant answer new WhatsApp messages instantly."
+              description="Let the assistant answer new messages instantly."
               checked={settings.autoReply}
               disabled={loading || saving}
               onChange={(value) => update("autoReply", value)}

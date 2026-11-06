@@ -16,16 +16,3 @@ export const defaultAiSettings = {
   hoursStart: "10:00",
   hoursEnd: "19:00"
 };
-
-export const defaultWhatsAppSettings = {
-  phone: "",
-  displayName: "",
-  provider: "",
-  phoneNumberId: "",
-  waapiInstanceId: "",
-  autoReply: true,
-  readReceipts: true,
-  verifyToken: "",
-  webhookUrl: "",
-  configured: false
-};

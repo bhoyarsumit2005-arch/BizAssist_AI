@@ -351,7 +351,7 @@ export default function Customers() {
             description={
               customers.length
                 ? "Try a different search or filter."
-                : "Customers are added automatically when someone messages your WhatsApp number."
+                : "Customers are added automatically when someone gets in touch."
             }
             action={
               customers.length ? (
@@ -444,7 +444,7 @@ export default function Customers() {
       </section>
 
       <p className="page-footnote">
-        <Info size={14} /> Customers are created automatically from WhatsApp conversations. You can also add, edit,
+        <Info size={14} /> Customers are created automatically from conversations. You can also add, edit,
         or archive them here; archived records keep their order history.
       </p>
 
@@ -479,8 +479,6 @@ export default function Customers() {
 function CustomerDetails({ customer, orders, stats, onClose, onEdit, onToggleActive, changingActive, canArchive = true }) {
   if (!customer) return null;
 
-  const phoneDigits = (customer.phone || "").replace(/\D/g, "");
-
   return (
     <Modal
       open={Boolean(customer)}
@@ -503,16 +501,6 @@ function CustomerDetails({ customer, orders, stats, onClose, onEdit, onToggleAct
             {customer.isActive === false ? <RotateCcw size={16} /> : <Archive size={16} />}
             {customer.isActive === false ? "Restore" : "Archive"}
           </button>
-          {phoneDigits ? (
-            <a
-              className="btn btn-secondary"
-              href={`https://wa.me/${phoneDigits}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <MessageCircle size={16} /> WhatsApp
-            </a>
-          ) : null}
           <button type="button" className="btn btn-primary" onClick={onClose}>Close</button>
         </>
       }

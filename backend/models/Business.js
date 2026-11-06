@@ -1,4 +1,3 @@
-import crypto from "crypto";
 import mongoose from "mongoose";
 
 export const AI_TONES = ["friendly", "professional", "playful", "concise"];
@@ -29,17 +28,6 @@ export const DEFAULT_AI_SETTINGS = Object.freeze({
   afterHours: false,
   hoursStart: "10:00",
   hoursEnd: "19:00"
-});
-
-export const DEFAULT_WHATSAPP_SETTINGS = Object.freeze({
-  phone: "",
-  displayName: "",
-  // "waapi" or "meta"; blank means auto-detect from the server environment.
-  provider: "",
-  phoneNumberId: "",
-  waapiInstanceId: "",
-  autoReply: true,
-  readReceipts: true
 });
 
 const aiSettingsSchema = new mongoose.Schema(
@@ -87,30 +75,6 @@ const aiSettingsSchema = new mongoose.Schema(
   { _id: false }
 );
 
-const whatsappSettingsSchema = new mongoose.Schema(
-  {
-    phone: { type: String, trim: true, default: DEFAULT_WHATSAPP_SETTINGS.phone },
-    displayName: { type: String, trim: true, default: DEFAULT_WHATSAPP_SETTINGS.displayName },
-    provider: {
-      type: String,
-      enum: ["", "meta", "waapi"],
-      default: DEFAULT_WHATSAPP_SETTINGS.provider
-    },
-    phoneNumberId: { type: String, trim: true, default: DEFAULT_WHATSAPP_SETTINGS.phoneNumberId },
-    // WaAPI instance id used to route incoming webhook events to this business.
-    waapiInstanceId: { type: String, trim: true, default: DEFAULT_WHATSAPP_SETTINGS.waapiInstanceId },
-    autoReply: { type: Boolean, default: DEFAULT_WHATSAPP_SETTINGS.autoReply },
-    readReceipts: { type: Boolean, default: DEFAULT_WHATSAPP_SETTINGS.readReceipts },
-    // Used for Meta's GET webhook verification. One token per business so a
-    // single deployment can host multiple WhatsApp numbers.
-    verifyToken: {
-      type: String,
-      default: () => crypto.randomBytes(24).toString("hex")
-    }
-  },
-  { _id: false }
-);
-
 const businessSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -144,18 +108,8 @@ const businessSchema = new mongoose.Schema({
     maxlength: 300
   },
 
-  whatsappConnected: {
-    type: Boolean,
-    default: false
-  },
-
   aiSettings: {
     type: aiSettingsSchema,
-    default: () => ({})
-  },
-
-  whatsappSettings: {
-    type: whatsappSettingsSchema,
     default: () => ({})
   }
 }, {

@@ -139,7 +139,7 @@ export default function StaffSettingsPanel() {
             <div>
               <ShieldCheck size={16} />
               <strong>Owner</strong>
-              <p>Full access, including AI, WhatsApp, team, and product changes.</p>
+              <p>Full access, including AI, team, and product changes.</p>
             </div>
             <div>
               <UserCheck size={16} />

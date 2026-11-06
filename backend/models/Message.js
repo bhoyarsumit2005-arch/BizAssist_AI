@@ -38,7 +38,7 @@ const messageSchema = new mongoose.Schema({
     default: false
   },
 
-  // Meta's message id, used to match delivery/read status callbacks and to
+  // Provider message id, used to match delivery/read status callbacks and to
   // ignore duplicate webhook deliveries.
   providerMessageId: {
     type: String,

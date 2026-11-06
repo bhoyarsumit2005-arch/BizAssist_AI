@@ -4,7 +4,6 @@ import {
   Brain,
   LayoutDashboard,
   LogOut,
-  MessageCircle,
   MessagesSquare,
   Package,
   ShoppingCart,
@@ -28,7 +27,6 @@ const mainNav = [
 
 const settingsNav = [
   { to: "/settings/ai", label: "AI Settings", icon: Brain },
-  { to: "/settings/whatsapp", label: "WhatsApp Settings", icon: MessageCircle },
   { to: "/settings/team", label: "Team", icon: ShieldCheck }
 ];
 

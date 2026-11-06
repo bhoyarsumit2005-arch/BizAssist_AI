@@ -72,7 +72,6 @@ export default function App() {
                 <Route element={<OwnerRoute />}>
                   <Route path="/settings" element={<Navigate to="/settings/ai" replace />} />
                   <Route path="/settings/ai" element={<Settings />} />
-                  <Route path="/settings/whatsapp" element={<Settings />} />
                   <Route path="/settings/team" element={<Settings />} />
                 </Route>
               </Route>

@@ -17,8 +17,8 @@ const conversationSchema = new mongoose.Schema({
 
   channel: {
     type: String,
-    enum: ["whatsapp", "web", "manual"],
-    default: "whatsapp"
+    enum: ["web", "manual"],
+    default: "manual"
   },
 
   status: {

@@ -1,9 +1,7 @@
 import mongoose from "mongoose";
 
-import Business from "../models/Business.js";
 import Conversation from "../models/Conversation.js";
 import Message from "../models/Message.js";
-import { sendTextMessage, WhatsAppError } from "../services/whatsappService.js";
 import { getBusinessId } from "../utils/businessScope.js";
 
 const MAX_MESSAGE_LENGTH = 4096;
@@ -31,18 +29,6 @@ const handleError = (error, res, action) => {
       success: false,
       message: Object.values(error.errors).map((item) => item.message).join(", ")
     });
-  }
-
-  if (error instanceof WhatsAppError) {
-    const status = {
-      NOT_CONFIGURED: 503,
-      BAD_RECIPIENT: 400,
-      TIMEOUT: 504,
-      SEND_FAILED: 502,
-      UNAVAILABLE: 502
-    }[error.code] || 502;
-
-    return res.status(status).json({ success: false, message: error.message });
   }
 
   console.error(`${action} error:`, error);
@@ -99,8 +85,10 @@ export const listMessages = async (req, res) => {
       .sort({ createdAt: 1 });
 
     if (conversation.unreadCount) {
-      conversation.unreadCount = 0;
-      await conversation.save();
+      await Conversation.updateOne(
+        { _id: conversation._id, businessId },
+        { $set: { unreadCount: 0 } }
+      );
     }
 
     return res.status(200).json({
@@ -154,9 +142,7 @@ export const updateConversation = async (req, res) => {
 
 /**
  * POST /api/conversations/:id/messages
- * Persists an outgoing message. WhatsApp conversations are delivered through
- * the Cloud API adapter; when it is not configured the request fails loudly
- * instead of pretending the message was sent.
+ * Persists an outgoing message on the conversation.
  */
 export const sendMessage = async (req, res) => {
   try {
@@ -186,18 +172,6 @@ export const sendMessage = async (req, res) => {
       return res.status(404).json({ success: false, message: "Conversation not found" });
     }
 
-    let providerMessageId = null;
-
-    if (conversation.channel === "whatsapp") {
-      const business = await Business.findById(businessId).select("whatsappSettings").lean();
-      const result = await sendTextMessage({
-        businessSettings: business?.whatsappSettings,
-        to: conversation.customerId?.phone,
-        text
-      });
-      providerMessageId = result.messageId;
-    }
-
     const message = await Message.create({
       businessId,
       conversationId: conversation._id,
@@ -205,8 +179,7 @@ export const sendMessage = async (req, res) => {
       direction: "outgoing",
       text,
       aiGenerated: false,
-      status: "sent",
-      providerMessageId
+      status: "sent"
     });
 
     await Conversation.updateOne(

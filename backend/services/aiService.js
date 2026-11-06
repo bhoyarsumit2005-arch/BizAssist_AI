@@ -147,7 +147,7 @@ export const buildMessages = ({ businessName, products, message, settings = {} }
   const hoursEnd = settings.hoursEnd || "19:00";
 
   const systemPrompt = [
-    `You are the WhatsApp sales assistant for "${store}".`,
+    `You are the sales assistant for "${store}".`,
     "Answer the customer using ONLY the product catalog below.",
     "",
     "Rules:",

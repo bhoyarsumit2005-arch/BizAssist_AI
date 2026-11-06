@@ -25,7 +25,7 @@ export default function AuthBrandPanel() {
 
       <div className="auth-brand__content">
         <span className="auth-eyebrow">
-          <span className="live-dot" /> Built for WhatsApp-first businesses
+          <span className="live-dot" /> Built for busy storefronts
         </span>
         <h1>
           Your storefront,
@@ -57,7 +57,7 @@ export default function AuthBrandPanel() {
             <span className="avatar avatar--xs">AS</span>
             <div>
               <strong>Aarav Sharma</strong>
-              <span>WhatsApp · just now</span>
+              <span>Customer · just now</span>
             </div>
             <span className="chip chip--success">AI</span>
           </div>

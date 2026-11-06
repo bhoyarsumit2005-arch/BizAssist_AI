@@ -296,7 +296,7 @@ export default function Orders() {
             description={
               orders.length
                 ? "Try clearing the search or choosing another status."
-                : "When your assistant captures an order on WhatsApp, it will show up here ready to fulfil."
+                : "When your assistant captures an order, it will show up here ready to fulfil."
             }
             action={
               orders.length ? (
